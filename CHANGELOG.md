@@ -2,6 +2,17 @@
 
 SeedMark follows [Semantic Versioning](https://semver.org/) for the public Python package and CLI.
 
+## [0.4.0] - 2026-08-17
+
+### Added
+- `generation.gif` for real-Qwen runs: a polished token-by-token animation that keeps the generated sentence visible and highlights exactly the token being appended at each step.
+- Candidate probability bars, keyed PRF score, selected token metadata and cumulative detector z-score in every animation frame.
+- `--gif-frame-ms` to control animation speed and `--no-gif` for benchmark-only runs.
+- `docs/animation.md` documenting what is highlighted and how the animation maps model probabilities to the statistical watermark signal.
+
+### Changed
+- Added Pillow only to the optional `real-llm` dependency set for GIF rendering; the dependency-free core package remains unchanged.
+
 ## [0.3.0] - 2026-08-17
 
 ### Added
