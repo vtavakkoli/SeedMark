@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use SeedMark in teaching or research, please cite this software."
+title: "SeedMark: First-Word-Seeded Keyed Pseudorandom Text Watermarking Lab"
+type: software
+authors:
+  - family-names: Tavakkoli
+    given-names: Vahid
+version: 0.1.0
+date-released: 2026-08-17
+license: MIT
+repository-code: "https://github.com/vtavakkoli/SeedMark"
+keywords:
+  - text watermarking
+  - language models
+  - pseudorandom functions
+  - statistical detection

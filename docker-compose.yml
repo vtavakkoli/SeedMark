@@ -1,0 +1,30 @@
+services:
+  experiment:
+    build:
+      context: .
+    command:
+      - experiment
+      - --output-dir
+      - /workspace/results/run
+      - --trials
+      - "300"
+      - --length
+      - "80"
+      - --first-word
+      - research
+      - --experiment-seed
+      - "20260817"
+    volumes:
+      - ./results:/workspace/results
+
+  report:
+    image: python:3.13-slim
+    working_dir: /workspace/results/run
+    command: ["python", "-m", "http.server", "8080", "--bind", "0.0.0.0"]
+    depends_on:
+      experiment:
+        condition: service_completed_successfully
+    volumes:
+      - ./results:/workspace/results:ro
+    ports:
+      - "8080:8080"
