@@ -14,13 +14,10 @@ dependency) while the multimodal model itself can still run with input_ids only.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 import hashlib
 import hmac
-import html
-import json
 import math
-from pathlib import Path
 from typing import Any
 
 from .core import DetectionResult, first_word_seed, normalize_word
@@ -151,7 +148,6 @@ class QwenSeedMark:
         )
         self.model.to(self.device)
         if self.device == "cpu":
-            # Float32 is slower/larger but avoids CPU kernels that may not support BF16.
             self.model.float()
         self.model.eval()
 
@@ -193,8 +189,6 @@ class QwenSeedMark:
 
         with torch.inference_mode():
             for position in range(1, max_new_tokens + 1):
-                # Qwen3.5's multimodal forward accepts text-only input_ids; pixel/video
-                # inputs are optional. We request only the logits needed by SeedMark.
                 outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
                 logits = outputs.logits[0, -1, :].float() / temperature
                 k = min(top_k, int(logits.shape[-1]))
@@ -214,13 +208,17 @@ class QwenSeedMark:
                 chosen_score = keyed_scores[chosen_index]
                 scores_seen.append(chosen_score)
                 cumulative_n = len(scores_seen)
-                cumulative_z = (sum(scores_seen) - 0.5 * cumulative_n) / math.sqrt(cumulative_n / 12.0)
+                cumulative_z = (
+                    sum(scores_seen) - 0.5 * cumulative_n
+                ) / math.sqrt(cumulative_n / 12.0)
 
                 candidate_trace = []
                 for idx, token_id in enumerate(candidate_ids):
                     candidate_trace.append(HFCandidateTrace(
                         token_id=token_id,
-                        token_text=self.tokenizer.decode([token_id], clean_up_tokenization_spaces=False),
+                        token_text=self.tokenizer.decode(
+                            [token_id], clean_up_tokenization_spaces=False
+                        ),
                         base_probability=float(base[idx]),
                         generation_probability=float(generation[idx]),
                         watermark_score=keyed_scores[idx],
@@ -229,7 +227,9 @@ class QwenSeedMark:
                 trace.append(HFStepTrace(
                     position=position,
                     chosen_token_id=chosen_id,
-                    chosen_token_text=self.tokenizer.decode([chosen_id], clean_up_tokenization_spaces=False),
+                    chosen_token_text=self.tokenizer.decode(
+                        [chosen_id], clean_up_tokenization_spaces=False
+                    ),
                     chosen_base_probability=float(base[chosen_index]),
                     chosen_generation_probability=float(generation[chosen_index]),
                     chosen_watermark_score=chosen_score,
@@ -239,7 +239,9 @@ class QwenSeedMark:
                 generated_ids.append(chosen_id)
                 next_id = torch.tensor([[chosen_id]], dtype=input_ids.dtype, device=self.device)
                 input_ids = torch.cat((input_ids, next_id), dim=1)
-                attention_mask = torch.cat((attention_mask, torch.ones_like(next_id)), dim=1)
+                attention_mask = torch.cat(
+                    (attention_mask, torch.ones_like(next_id)), dim=1
+                )
                 eos_id = self.tokenizer.eos_token_id
                 if chosen_id == int(eos_id):
                     break
@@ -282,12 +284,7 @@ def detect_text_with_tokenizer(
     secret_key: str,
     threshold_z: float = 3.0,
 ) -> DetectionResult:
-    """Retokenize text using only the public tokenizer, then run the detector.
-
-    No model weights, processor, torchvision, logits, or hidden states are loaded.
-    For exact reproducibility, the text must preserve the original generated
-    tokenization; the saved generated_token_ids remain authoritative.
-    """
+    """Retokenize text using only the public tokenizer, then run the detector."""
     _, AutoTokenizer, _ = _optional_stack()
     tokenizer = _load_tokenizer(AutoTokenizer, model_name)
     full_ids = tokenizer(text, add_special_tokens=True)["input_ids"]
@@ -301,50 +298,3 @@ def detect_text_with_tokenizer(
         first_word=normalize_word(prompt),
         threshold_z=threshold_z,
     )
-
-
-def _result_dict(result: HFGenerationResult) -> dict[str, Any]:
-    payload = asdict(result)
-    payload["detection"] = asdict(result.detection)
-    return payload
-
-
-def write_qwen_report(output_dir: Path, marked: HFGenerationResult, control: HFGenerationResult) -> None:
-    """Write JSON traces plus a standalone interactive HTML token microscope."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    marked_data, control_data = _result_dict(marked), _result_dict(control)
-    (output_dir / "generated_watermarked.txt").write_text(marked.text, encoding="utf-8")
-    (output_dir / "generated_control.txt").write_text(control.text, encoding="utf-8")
-    (output_dir / "watermarked-trace.json").write_text(
-        json.dumps(marked_data, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
-    (output_dir / "control-trace.json").write_text(
-        json.dumps(control_data, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
-    summary = {
-        "model": marked.model_name,
-        "prompt": marked.prompt,
-        "first_word": marked.first_word,
-        "top_k": marked.top_k,
-        "temperature": marked.temperature,
-        "strength": marked.strength,
-        "generated_tokens": len(marked.generated_token_ids),
-        "watermarked_detection": asdict(marked.detection),
-        "control_detection": asdict(control.detection),
-        "preprocessing": "AutoTokenizer text-only; no image/video processor",
-        "note": "Real Qwen logits were used for generation; detection used only token IDs, first-word seed and secret key.",
-    }
-    (output_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-
-    payload = json.dumps(marked_data, ensure_ascii=False).replace("</", "<\\/")
-    safe_model = html.escape(marked.model_name)
-    safe_prompt = html.escape(marked.prompt)
-    doc = f'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SeedMark Qwen report</title><style>
-:root{{--bg:#f8fafc;--ink:#172033;--muted:#64748b;--pink:#ec4899;--violet:#7c3aed;--line:#e2e8f0}}*{{box-sizing:border-box}}body{{margin:0;background:linear-gradient(135deg,#fff,#f8fafc 55%,#fdf2f8);font:15px/1.5 system-ui;color:var(--ink)}}main{{max-width:1180px;margin:auto;padding:28px 18px 70px}}h1{{font-size:clamp(30px,5vw,52px);letter-spacing:-.04em;margin:.2em 0}}.lead{{max-width:900px;color:#475569}}.grid{{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:20px 0}}.card{{background:white;border:1px solid var(--line);border-radius:18px;padding:18px;box-shadow:0 10px 30px #0f172a0d}}.metric b{{display:block;font-size:28px}}.metric small{{color:var(--muted);text-transform:uppercase}}.toolbar{{display:flex;gap:10px;align-items:center}}button{{border:0;border-radius:10px;background:var(--violet);color:white;padding:9px 14px;font-weight:700}}input{{flex:1}}.candidate{{display:grid;grid-template-columns:190px 1fr 90px;gap:10px;align-items:center;margin:8px 0}}.bar{{height:9px;background:#e2e8f0;border-radius:20px;overflow:hidden;margin:3px 0}}.bar i{{display:block;height:100%;background:var(--violet)}}.bar.mark i{{background:var(--pink)}}.chosen{{font-weight:800;color:#be185d}}code{{background:#f1f5f9;padding:2px 6px;border-radius:6px}}.note{{background:#fffbeb;border-left:4px solid #f59e0b;padding:12px;border-radius:9px}}pre{{white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:14px;border-radius:12px}}@media(max-width:800px){{.grid{{grid-template-columns:1fr 1fr}}.candidate{{grid-template-columns:120px 1fr 70px}}}}</style></head><body><main>
-<div style="font-weight:800;color:#7c3aed;text-transform:uppercase;letter-spacing:.12em;font-size:12px">SeedMark · real LLM experiment</div><h1>Qwen token probabilities + keyed pseudorandom watermark</h1><p class="lead">Model <code>{safe_model}</code> produced real next-token logits. Prompt: <code>{safe_prompt}</code>. Text preprocessing uses only <code>AutoTokenizer</code>; no image/video processor is created. The detector never receives model logits.</p>
-<div class="grid"><div class="card metric"><small>Marked z</small><b>{marked.detection.z_score:.2f}</b></div><div class="card metric"><small>Control z</small><b>{control.detection.z_score:.2f}</b></div><div class="card metric"><small>Top-k</small><b>{marked.top_k}</b></div><div class="card metric"><small>Tokens</small><b>{len(marked.generated_token_ids)}</b></div></div>
-<section class="card"><h2>Watermarked output</h2><pre>{html.escape(marked.text)}</pre></section>
-<section class="card"><h2>Interactive token microscope</h2><div class="toolbar"><button id="play">▶ Play</button><input id="slider" type="range" min="0" value="0"><b id="step"></b><span id="z"></span></div><p id="explain" class="note"></p><div id="cand"></div></section>
-<section class="card"><h2>What this proves</h2><p>Generation uses a real LLM distribution. Detection does not: it reconstructs the keyed score from <code>(first word, position, token ID)</code>. This is a research teaching baseline, not SynthID, Anthropic's production system, or C2PA.</p></section>
-<script>const D={payload},T=D.trace,s=document.getElementById('slider');s.max=Math.max(0,T.length-1);let timer=null;function esc(x){{return String(x).replace(/[&<>"']/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]))}}function pct(x){{return Math.min(100,x*100).toFixed(2)+'%'}}function render(i){{const a=T[i];if(!a)return;s.value=i;step.textContent=`step ${{a.position}}/${{T.length}}`;z.textContent=`cumulative z=${{a.cumulative_z.toFixed(2)}}`;explain.innerHTML=`chosen token <b>${{esc(a.chosen_token_text)}}</b> · id <b>${{a.chosen_token_id}}</b> · keyed score <b>${{a.chosen_watermark_score.toFixed(3)}}</b>`;cand.innerHTML=a.candidates.map(c=>`<div class="candidate ${{c.chosen?'chosen':''}}"><span>${{esc(c.token_text)}} <small>#${{c.token_id}}</small>${{c.chosen?' ✓':''}}</span><div><div class="bar"><i style="width:${{pct(c.base_probability)}}"></i></div><div class="bar mark"><i style="width:${{pct(c.generation_probability)}}"></i></div></div><span>u=${{c.watermark_score.toFixed(3)}}</span></div>`).join('')}}s.oninput=e=>render(+e.target.value);play.onclick=()=>{{if(timer){{clearInterval(timer);timer=null;return}}timer=setInterval(()=>render((+s.value+1)%T.length),450)}};render(0);</script></main></body></html>'''
-    (output_dir / "report.html").write_text(doc, encoding="utf-8")

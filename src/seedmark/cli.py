@@ -7,18 +7,14 @@ import json
 from pathlib import Path
 
 from ._version import __version__
-from .animation import write_generation_gif
+from .animation import write_visual_assets
 from .core import WatermarkConfig, detect_tokens, tokenize
 from .experiment import run_experiment
 from .generation import generate_text
-from .hf_llm import (
-    DEFAULT_MODEL,
-    QwenSeedMark,
-    detect_text_with_tokenizer,
-    write_qwen_report,
-)
+from .hf_llm import DEFAULT_MODEL, QwenSeedMark, detect_text_with_tokenizer
 from .lm import ToyBigramLM
 from .model_cache import cache_home, prefetch_model
+from .reporting import write_qwen_report
 
 
 def _add_common_config(parser: argparse.ArgumentParser) -> None:
@@ -74,8 +70,14 @@ def build_parser() -> argparse.ArgumentParser:
     qwen.add_argument("--secret-key", default="seedmark-demo-key")
     qwen.add_argument("--rng-seed", type=int, default=20260817)
     qwen.add_argument("--output-dir", type=Path, default=Path("results/qwen"))
-    qwen.add_argument("--gif-frame-ms", type=int, default=650, help="animation frame duration in milliseconds")
-    qwen.add_argument("--no-gif", action="store_true", help="skip generation.gif creation")
+    qwen.add_argument("--gif-frame-ms", type=int, default=650, help="GIF frame duration in milliseconds")
+    qwen.add_argument("--gif-width", type=int, default=1200, help="GIF/preview width in pixels")
+    qwen.add_argument("--gif-height", type=int, default=900, help="GIF/preview height in pixels")
+    qwen.add_argument(
+        "--no-gif",
+        action="store_true",
+        help="skip generation/detection GIFs and static preview PNGs",
+    )
 
     qdetect = sub.add_parser("qwen-detect", help="retokenize Qwen text and detect without loading model weights")
     qdetect.add_argument("--model", default=DEFAULT_MODEL)
@@ -151,30 +153,36 @@ def main(argv: list[str] | None = None) -> int:
         )
         marked = lab.generate(**common, watermarked=True)
         control = lab.generate(**common, watermarked=False)
-        write_qwen_report(args.output_dir, marked, control)
-        animation_path = None
+
+        assets: dict[str, str] = {}
         if not args.no_gif:
-            animation_path = write_generation_gif(
-                args.output_dir / "generation.gif",
+            assets = write_visual_assets(
+                args.output_dir,
                 marked,
+                control,
                 frame_ms=args.gif_frame_ms,
+                width=args.gif_width,
+                height=args.gif_height,
             )
+        report_path = write_qwen_report(args.output_dir, marked, control, assets=assets)
+
         print(json.dumps({
             "seedmark_version": __version__,
             "model": marked.model_name,
             "cache_home": str(cache_home()),
             "output_dir": str(args.output_dir),
-            "report": str(args.output_dir / "report.html"),
-            "animation": str(animation_path) if animation_path is not None else None,
+            "report": str(report_path),
+            "visual_assets": assets,
             "watermarked_z": marked.detection.z_score,
             "watermarked_detected": marked.detection.detected,
             "control_z": control.detection.z_score,
             "control_detected": control.detection.detected,
             "generated_tokens": len(marked.generated_token_ids),
         }, indent=2))
-        print(f"\nOpen {args.output_dir / 'report.html'}")
-        if animation_path is not None:
-            print(f"Animated generation: {animation_path}")
+        print(f"\nOpen {report_path}")
+        if assets:
+            print(f"Generation animation: {args.output_dir / assets['generation_gif']}")
+            print(f"Detection animation: {args.output_dir / assets['detection_gif']}")
         return 0
 
     if args.command == "qwen-detect":
