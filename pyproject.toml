@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "seedmark"
-version = "0.2.0"
+version = "0.2.1"
 description = "Educational keyed pseudorandom text watermarking and statistical detection"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -26,6 +26,7 @@ dependencies = []
 [project.optional-dependencies]
 real-llm = [
   "torch>=2.8.0",
+  "torchvision>=0.23.0",
   "transformers>=5.0.0",
   "pillow>=11.0.0",
 ]
