@@ -6,6 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
+from ._version import __version__
 from .core import WatermarkConfig, detect_tokens, tokenize
 from .experiment import run_experiment
 from .generation import generate_text
@@ -16,6 +17,7 @@ from .hf_llm import (
     write_qwen_report,
 )
 from .lm import ToyBigramLM
+from .model_cache import cache_home, prefetch_model
 
 
 def _add_common_config(parser: argparse.ArgumentParser) -> None:
@@ -30,6 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="seedmark",
         description="First-word-seeded keyed pseudorandom text-watermark teaching lab",
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     generate = sub.add_parser("generate", help="generate one inspectable toy sequence")
@@ -53,6 +56,10 @@ def build_parser() -> argparse.ArgumentParser:
     experiment.add_argument("--first-word", default="research")
     experiment.add_argument("--experiment-seed", type=int, default=20260817)
     _add_common_config(experiment)
+
+    qcache = sub.add_parser("qwen-cache", help="prefetch a Qwen model into the persistent HF cache")
+    qcache.add_argument("--model", default=DEFAULT_MODEL)
+    qcache.add_argument("--revision", default=None)
 
     qwen = sub.add_parser("qwen-demo", help="run a matched real-Qwen marked/control experiment")
     qwen.add_argument("--model", default=DEFAULT_MODEL)
@@ -80,6 +87,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
     if args.command == "generate":
         config = WatermarkConfig(args.secret_key, args.strength, args.top_k, args.threshold_z)
         result = generate_text(
@@ -92,6 +100,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(result.text)
         print(json.dumps({
+            "seedmark_version": __version__,
             "watermarked": result.watermarked,
             "z_score": result.detection.z_score,
             "p_value_one_sided": result.detection.p_value_one_sided,
@@ -104,12 +113,24 @@ def main(argv: list[str] | None = None) -> int:
         tokens = tokenize(text)
         result = detect_tokens(tokens, secret_key=args.secret_key, threshold_z=args.threshold_z)
         print(json.dumps({
+            "seedmark_version": __version__,
             "n_scored_tokens": result.n_scored_tokens,
             "mean_score": result.mean_score,
             "z_score": result.z_score,
             "p_value_one_sided": result.p_value_one_sided,
             "threshold_z": result.threshold_z,
             "detected": result.detected,
+        }, indent=2))
+        return 0
+
+    if args.command == "qwen-cache":
+        snapshot = prefetch_model(args.model, revision=args.revision)
+        print(json.dumps({
+            "seedmark_version": __version__,
+            "model": args.model,
+            "revision": args.revision or "latest",
+            "cache_home": str(cache_home()),
+            "snapshot_path": str(snapshot),
         }, indent=2))
         return 0
 
@@ -129,7 +150,9 @@ def main(argv: list[str] | None = None) -> int:
         control = lab.generate(**common, watermarked=False)
         write_qwen_report(args.output_dir, marked, control)
         print(json.dumps({
+            "seedmark_version": __version__,
             "model": marked.model_name,
+            "cache_home": str(cache_home()),
             "output_dir": str(args.output_dir),
             "watermarked_z": marked.detection.z_score,
             "watermarked_detected": marked.detection.detected,
@@ -150,6 +173,7 @@ def main(argv: list[str] | None = None) -> int:
             threshold_z=args.threshold_z,
         )
         print(json.dumps({
+            "seedmark_version": __version__,
             "model_loaded": False,
             "n_scored_tokens": result.n_scored_tokens,
             "mean_score": result.mean_score,

@@ -1,0 +1,5 @@
+# Runtime dependencies for the real-Qwen Docker image.
+# Keep this list in sync with pyproject.toml [project.optional-dependencies].real-llm.
+torch>=2.8.0
+transformers>=5.5.0,<6
+huggingface_hub>=0.34,<2

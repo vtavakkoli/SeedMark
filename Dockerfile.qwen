@@ -1,16 +1,23 @@
+# syntax=docker/dockerfile:1.7
 FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/workspace/src \
-    HF_HOME=/models/huggingface
+    HF_HOME=/models/huggingface \
+    HF_HUB_CACHE=/models/huggingface/hub
 
 WORKDIR /workspace
 
-COPY pyproject.toml README.md LICENSE ./
-COPY src ./src
-RUN python -m pip install --no-cache-dir -U pip && \
-    python -m pip install --no-cache-dir -e ".[real-llm]"
+# Dependency layer: this is rebuilt only when the dependency manifest changes.
+COPY requirements/real-llm.txt /tmp/requirements-real-llm.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install -U pip && \
+    python -m pip install -r /tmp/requirements-real-llm.txt
 
-ENTRYPOINT ["seedmark"]
+# Application source is copied after dependencies. SeedMark runs directly from
+# PYTHONPATH, so source edits do not trigger a package reinstall inside Docker.
+COPY src ./src
+
+ENTRYPOINT ["python", "-m", "seedmark.cli"]
 CMD ["qwen-demo", "--output-dir", "/workspace/results/qwen"]

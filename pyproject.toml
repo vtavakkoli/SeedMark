@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "seedmark"
-version = "0.2.2"
+dynamic = ["version"]
 description = "Educational keyed pseudorandom text watermarking and statistical detection"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -27,6 +27,10 @@ dependencies = []
 real-llm = [
   "torch>=2.8.0",
   "transformers>=5.5.0,<6",
+  "huggingface_hub>=0.34,<2",
+]
+dev = [
+  "build>=1.2",
 ]
 
 [project.scripts]
@@ -37,3 +41,6 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 seedmark = ["py.typed"]
+
+[tool.setuptools.dynamic]
+version = {attr = "seedmark._version.__version__"}
