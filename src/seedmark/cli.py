@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 from ._version import __version__
+from .animation import write_generation_gif
 from .core import WatermarkConfig, detect_tokens, tokenize
 from .experiment import run_experiment
 from .generation import generate_text
@@ -73,6 +74,8 @@ def build_parser() -> argparse.ArgumentParser:
     qwen.add_argument("--secret-key", default="seedmark-demo-key")
     qwen.add_argument("--rng-seed", type=int, default=20260817)
     qwen.add_argument("--output-dir", type=Path, default=Path("results/qwen"))
+    qwen.add_argument("--gif-frame-ms", type=int, default=650, help="animation frame duration in milliseconds")
+    qwen.add_argument("--no-gif", action="store_true", help="skip generation.gif creation")
 
     qdetect = sub.add_parser("qwen-detect", help="retokenize Qwen text and detect without loading model weights")
     qdetect.add_argument("--model", default=DEFAULT_MODEL)
@@ -149,11 +152,20 @@ def main(argv: list[str] | None = None) -> int:
         marked = lab.generate(**common, watermarked=True)
         control = lab.generate(**common, watermarked=False)
         write_qwen_report(args.output_dir, marked, control)
+        animation_path = None
+        if not args.no_gif:
+            animation_path = write_generation_gif(
+                args.output_dir / "generation.gif",
+                marked,
+                frame_ms=args.gif_frame_ms,
+            )
         print(json.dumps({
             "seedmark_version": __version__,
             "model": marked.model_name,
             "cache_home": str(cache_home()),
             "output_dir": str(args.output_dir),
+            "report": str(args.output_dir / "report.html"),
+            "animation": str(animation_path) if animation_path is not None else None,
             "watermarked_z": marked.detection.z_score,
             "watermarked_detected": marked.detection.detected,
             "control_z": control.detection.z_score,
@@ -161,6 +173,8 @@ def main(argv: list[str] | None = None) -> int:
             "generated_tokens": len(marked.generated_token_ids),
         }, indent=2))
         print(f"\nOpen {args.output_dir / 'report.html'}")
+        if animation_path is not None:
+            print(f"Animated generation: {animation_path}")
         return 0
 
     if args.command == "qwen-detect":
