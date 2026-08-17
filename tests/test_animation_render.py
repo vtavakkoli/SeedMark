@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 from tempfile import TemporaryDirectory
@@ -10,6 +11,7 @@ import unittest
 from seedmark.animation import write_generation_gif
 
 
+@unittest.skipUnless(importlib.util.find_spec("PIL"), "Pillow is an optional real-llm dependency")
 class AnimationRenderTests(unittest.TestCase):
     def test_writes_multiframe_gif(self) -> None:
         from PIL import Image
