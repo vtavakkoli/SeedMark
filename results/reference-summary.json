@@ -1,0 +1,20 @@
+{
+  "status": "local deterministic validation",
+  "scientific_scope": "toy-model educational result; not a vendor-watermark benchmark",
+  "python": "3.13",
+  "first_word": "research",
+  "first_word_seed_sha256": "66f62d1807d3821a3865f2573b69c74be033f1341240ac861fefc6d430bff5e0",
+  "strength": 1.5,
+  "top_k": 8,
+  "threshold_z": 3.0,
+  "length": 80,
+  "trials": 300,
+  "experiment_seed": 20260817,
+  "marked_example_z": 4.7097340744,
+  "unmarked_example_z": 0.3519122397,
+  "marked_mean_z": 5.1069240080,
+  "unmarked_mean_z": 0.0290155458,
+  "true_positive_rate": 0.99,
+  "false_positive_rate": 0.0,
+  "auc": 0.9999444444
+}
