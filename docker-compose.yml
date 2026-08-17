@@ -46,6 +46,8 @@ services:
       - "20"
       - --output-dir
       - /workspace/results/qwen
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
     volumes:
       - ./results:/workspace/results
       - hf-cache:/models/huggingface
