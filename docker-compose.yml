@@ -28,3 +28,40 @@ services:
       - ./results:/workspace/results:ro
     ports:
       - "8080:8080"
+
+  qwen:
+    profiles: ["real-llm"]
+    build:
+      context: .
+      dockerfile: Dockerfile.qwen
+    command:
+      - qwen-demo
+      - --model
+      - Qwen/Qwen3.5-0.8B
+      - --prompt
+      - Research is
+      - --max-new-tokens
+      - "64"
+      - --top-k
+      - "20"
+      - --output-dir
+      - /workspace/results/qwen
+    volumes:
+      - ./results:/workspace/results
+      - hf-cache:/models/huggingface
+
+  qwen-report:
+    profiles: ["real-llm"]
+    image: python:3.13-slim
+    working_dir: /workspace/results/qwen
+    command: ["python", "-m", "http.server", "8081", "--bind", "0.0.0.0"]
+    depends_on:
+      qwen:
+        condition: service_completed_successfully
+    volumes:
+      - ./results:/workspace/results:ro
+    ports:
+      - "8081:8081"
+
+volumes:
+  hf-cache:
