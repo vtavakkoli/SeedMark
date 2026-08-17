@@ -46,7 +46,7 @@ jobs:
           python-version: "3.13"
       - name: Install animation dependency
         run: python -m pip install "pillow>=11.0,<13"
-      - name: Render multi-frame generation GIF
+      - name: Render and verify generation + detection GIFs
         run: python tests/test_animation_render.py
 
   docker-build:
