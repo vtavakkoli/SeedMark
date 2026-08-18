@@ -1,14 +1,23 @@
 """Semantic self-keying primitives for SeedMark.
 
-Semantic mode replaces the fragile first-word/absolute-position seed with a
-sentence-synchronised semantic context key.  The first answer sentence is
-bootstrapped from the user question.  After a sentence is completed, a compact
-semantic embedding of the recent answer is assigned to a secret random semantic
-bucket; that bucket becomes the key context for watermarking the next sentence.
+Semantic mode uses coarse secret semantic buckets rather than exact lexical
+prefixes. Two scopes are supported:
+
+* ``answer`` (default): one semantic bucket is derived from the complete answer.
+  Generation uses a draft/commit pass so the final answer lands in the same
+  bucket that keyed token sampling; detection derives the bucket from the final
+  answer itself.
+* ``paragraph``: the user question bootstraps the first paragraph and each
+  completed paragraph keys the following paragraph. Paragraph boundaries provide
+  streaming re-synchronisation points without reacting to sentence punctuation.
+
+Within either scope, token scores use a token-specific occurrence counter instead
+of an absolute text position. Inserting an unrelated token therefore does not
+shift the keyed score stream for every later token.
 
 This is an experimental research mode inspired by semantics-based watermarking
-work such as SemaMark and SemStamp.  It is not a reimplementation of either
-system and does not claim paraphrase-proof detection.
+work such as SemaMark and SemStamp. It is not a reimplementation of either system
+and does not claim paraphrase-proof detection.
 """
 
 from __future__ import annotations
@@ -18,16 +27,16 @@ import hashlib
 import hmac
 import math
 import random
-import re
 from typing import Any, Protocol, Sequence
 
 from .core import DetectionResult
 
 _TWO64 = float(1 << 64)
-_SEMANTIC_NAMESPACE = b"seedmark-semantic-v1\x00"
-_SENTENCE_END_RE = re.compile(r"[.!?][\"'\u201d\u2019)\]]*\s*$")
+_SEMANTIC_NAMESPACE = b"seedmark-semantic-v2\x00"
 
 DEFAULT_SEMANTIC_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+DEFAULT_SEMANTIC_SCOPE = "answer"
+SEMANTIC_SCOPES = ("answer", "paragraph")
 
 
 class SemanticEncoder(Protocol):
@@ -57,8 +66,10 @@ class SemanticWatermarkConfig:
     top_k: int = 20
     threshold_z: float = 3.0
     bucket_count: int = 32
-    context_sentences: int = 1
+    semantic_scope: str = DEFAULT_SEMANTIC_SCOPE
+    context_paragraphs: int = 1
     semantic_model: str = DEFAULT_SEMANTIC_MODEL
+    max_answer_passes: int = 4
 
     def __post_init__(self) -> None:
         if not self.secret_key:
@@ -71,17 +82,21 @@ class SemanticWatermarkConfig:
             raise ValueError("threshold_z must be > 0")
         if self.bucket_count < 4:
             raise ValueError("bucket_count must be >= 4")
-        if self.context_sentences < 1:
-            raise ValueError("context_sentences must be >= 1")
+        if self.semantic_scope not in SEMANTIC_SCOPES:
+            raise ValueError(f"semantic_scope must be one of {SEMANTIC_SCOPES}")
+        if self.context_paragraphs < 1:
+            raise ValueError("context_paragraphs must be >= 1")
         if not self.semantic_model:
             raise ValueError("semantic_model must not be empty")
+        if self.max_answer_passes < 1:
+            raise ValueError("max_answer_passes must be >= 1")
 
 
 class HFMeanPoolingSemanticEncoder:
     """Small Hugging Face encoder with masked mean pooling.
 
     The implementation intentionally depends only on the existing ``real-llm``
-    optional dependency set (PyTorch + Transformers).  It does not require the
+    optional dependency set (PyTorch + Transformers). It does not require the
     sentence-transformers Python package.
     """
 
@@ -143,12 +158,7 @@ class HFMeanPoolingSemanticEncoder:
 
 
 class SemanticBucketizer:
-    """Map dense semantic vectors to coarse secret random-projection buckets.
-
-    Coarse nearest-anchor buckets are deliberately used instead of hashing every
-    embedding bit.  Small semantic changes can then remain in the same bucket,
-    while the secret key still hides the bucket geometry from an attacker.
-    """
+    """Map dense semantic vectors to coarse secret random-projection buckets."""
 
     def __init__(self, *, secret_key: str, bucket_count: int = 32) -> None:
         if not secret_key:
@@ -210,40 +220,46 @@ class SemanticBucketizer:
 def semantic_token_score(
     secret_key: str,
     semantic_bucket: int,
-    token_offset: int,
+    token_occurrence: int,
     token_id: int,
 ) -> float:
-    """Map (semantic bucket, sentence-local offset, token id) to U[0,1)."""
+    """Map (semantic bucket, token occurrence, token id) to U[0,1).
+
+    ``token_occurrence`` is the occurrence number of this *specific candidate
+    token ID* within the current semantic scope, not an absolute text position.
+    This keeps unrelated insertions/deletions from shifting all later PRF inputs.
+    """
 
     if not secret_key:
         raise ValueError("secret_key must not be empty")
     if semantic_bucket < 0:
         raise ValueError("semantic_bucket must be >= 0")
-    if token_offset < 1:
-        raise ValueError("token_offset must be >= 1")
+    if token_occurrence < 1:
+        raise ValueError("token_occurrence must be >= 1")
     if token_id < 0:
         raise ValueError("token_id must be >= 0")
     message = (
         _SEMANTIC_NAMESPACE
         + b"token\x00"
         + semantic_bucket.to_bytes(4, "big")
-        + token_offset.to_bytes(4, "big")
+        + token_occurrence.to_bytes(4, "big")
         + token_id.to_bytes(8, "big")
     )
     digest = hmac.new(secret_key.encode("utf-8"), message, hashlib.sha256).digest()
     return int.from_bytes(digest[:8], "big") / _TWO64
 
 
-def is_sentence_boundary(text: str) -> bool:
-    """Return whether accumulated visible text ends a semantic sentence segment."""
+def is_paragraph_boundary(text: str) -> bool:
+    """Return whether accumulated visible text ends at a blank-line boundary."""
 
     if not text:
         return False
-    return bool(_SENTENCE_END_RE.search(text)) or text.endswith("\n\n")
+    normalized = text.replace("\r\n", "\n")
+    return normalized.endswith("\n\n")
 
 
 class SemanticContextTracker:
-    """Maintain the semantic key and sentence-local token offset during streaming."""
+    """Maintain paragraph semantic state for streaming generation/detection."""
 
     def __init__(
         self,
@@ -251,96 +267,73 @@ class SemanticContextTracker:
         encoder: SemanticEncoder,
         bucketizer: SemanticBucketizer,
         bootstrap_text: str,
-        context_sentences: int = 1,
+        context_paragraphs: int = 1,
     ) -> None:
-        if context_sentences < 1:
-            raise ValueError("context_sentences must be >= 1")
+        if context_paragraphs < 1:
+            raise ValueError("context_paragraphs must be >= 1")
         bootstrap_text = bootstrap_text.strip()
         if not bootstrap_text:
             raise ValueError("bootstrap_text must not be empty")
         self.encoder = encoder
         self.bucketizer = bucketizer
-        self.context_sentences = context_sentences
-        self.completed_sentences: list[str] = []
-        self.current_sentence_text = ""
-        self.current_sentence_tokens = 0
-        self.sentence_index = 0
+        self.context_paragraphs = context_paragraphs
+        self.completed_paragraphs: list[str] = []
+        self.current_paragraph_text = ""
+        self.paragraph_index = 0
         self.current_key = bucketizer.key_for_text(bootstrap_text, encoder)
         self.bootstrap_text = bootstrap_text
+        self._token_occurrences: dict[int, int] = {}
 
-    @property
-    def next_token_offset(self) -> int:
-        return self.current_sentence_tokens + 1
+    def next_token_occurrence(self, token_id: int) -> int:
+        return self._token_occurrences.get(int(token_id), 0) + 1
 
     @property
     def semantic_context(self) -> str:
-        if not self.completed_sentences:
+        if not self.completed_paragraphs:
             return self.bootstrap_text
-        return " ".join(self.completed_sentences[-self.context_sentences :])
+        return "\n\n".join(self.completed_paragraphs[-self.context_paragraphs :])
 
-    def observe_token_piece(self, piece: str) -> bool:
-        """Observe one decoded token piece and re-key at sentence boundaries."""
+    def observe_token(self, token_id: int, piece: str) -> bool:
+        """Observe one chosen token and re-key only at paragraph boundaries."""
 
-        self.current_sentence_tokens += 1
-        self.current_sentence_text += piece
-        if not is_sentence_boundary(self.current_sentence_text):
+        token_id = int(token_id)
+        self._token_occurrences[token_id] = self.next_token_occurrence(token_id)
+        self.current_paragraph_text += piece
+        if not is_paragraph_boundary(self.current_paragraph_text):
             return False
 
-        sentence = self.current_sentence_text.strip()
-        if sentence:
-            self.completed_sentences.append(sentence)
-            context = " ".join(self.completed_sentences[-self.context_sentences :])
+        paragraph = self.current_paragraph_text.strip()
+        if paragraph:
+            self.completed_paragraphs.append(paragraph)
+            context = "\n\n".join(
+                self.completed_paragraphs[-self.context_paragraphs :]
+            )
             self.current_key = self.bucketizer.key_for_text(context, self.encoder)
-        self.current_sentence_text = ""
-        self.current_sentence_tokens = 0
-        self.sentence_index += 1
+        self.current_paragraph_text = ""
+        self._token_occurrences.clear()
+        self.paragraph_index += 1
         return True
 
 
-def detect_semantic_token_ids(
-    token_ids: Sequence[int],
-    *,
-    tokenizer: Any,
-    encoder: SemanticEncoder,
-    secret_key: str,
-    bootstrap_text: str,
-    threshold_z: float = 3.0,
-    bucket_count: int = 32,
-    context_sentences: int = 1,
-) -> DetectionResult:
-    """Detect semantic self-keyed correlation from visible generated token IDs.
+def decode_generated_text(tokenizer: Any, token_ids: Sequence[int]) -> str:
+    """Decode visible generated IDs with a small tokenizer-compatibility fallback."""
 
-    The detector reconstructs semantic buckets from the observed text itself.
-    Sentence boundaries reset the local token offset, so insertions/deletions in
-    one sentence do not permanently shift every later token position.
-    """
-
-    if threshold_z <= 0:
-        raise ValueError("threshold_z must be > 0")
-    if not token_ids:
-        return DetectionResult(0, 0.5, 0.0, 0.5, threshold_z, False)
-
-    bucketizer = SemanticBucketizer(secret_key=secret_key, bucket_count=bucket_count)
-    tracker = SemanticContextTracker(
-        encoder=encoder,
-        bucketizer=bucketizer,
-        bootstrap_text=bootstrap_text,
-        context_sentences=context_sentences,
-    )
-    observed: list[float] = []
-    for token_id in token_ids:
-        token_id = int(token_id)
-        observed.append(
-            semantic_token_score(
-                secret_key,
-                tracker.current_key.bucket,
-                tracker.next_token_offset,
-                token_id,
-            )
+    ids = [int(token_id) for token_id in token_ids]
+    try:
+        return tokenizer.decode(
+            ids,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
         )
-        piece = tokenizer.decode([token_id], clean_up_tokenization_spaces=False)
-        tracker.observe_token_piece(piece)
+    except TypeError:
+        return tokenizer.decode(ids, clean_up_tokenization_spaces=False)
 
+
+def _detection_from_scores(
+    observed: Sequence[float], *, threshold_z: float
+) -> DetectionResult:
+    if not observed:
+        return DetectionResult(0, 0.5, 0.0, 0.5, threshold_z, False)
     n = len(observed)
     mean_score = sum(observed) / n
     z_score = (sum(observed) - 0.5 * n) / math.sqrt(n / 12.0)
@@ -353,3 +346,77 @@ def detect_semantic_token_ids(
         threshold_z=threshold_z,
         detected=z_score >= threshold_z,
     )
+
+
+def detect_semantic_token_ids(
+    token_ids: Sequence[int],
+    *,
+    tokenizer: Any,
+    encoder: SemanticEncoder,
+    secret_key: str,
+    bootstrap_text: str,
+    threshold_z: float = 3.0,
+    bucket_count: int = 32,
+    semantic_scope: str = DEFAULT_SEMANTIC_SCOPE,
+    context_paragraphs: int = 1,
+) -> DetectionResult:
+    """Detect semantic-keyed correlation from visible generated token IDs.
+
+    ``answer`` scope embeds the complete observed answer and uses one bucket for
+    all token occurrences. ``paragraph`` scope reconstructs the previous-paragraph
+    bucket while resetting occurrence counters at blank-line boundaries.
+    """
+
+    if threshold_z <= 0:
+        raise ValueError("threshold_z must be > 0")
+    if semantic_scope not in SEMANTIC_SCOPES:
+        raise ValueError(f"semantic_scope must be one of {SEMANTIC_SCOPES}")
+    if context_paragraphs < 1:
+        raise ValueError("context_paragraphs must be >= 1")
+    if not token_ids:
+        return DetectionResult(0, 0.5, 0.0, 0.5, threshold_z, False)
+
+    bucketizer = SemanticBucketizer(secret_key=secret_key, bucket_count=bucket_count)
+    observed: list[float] = []
+
+    if semantic_scope == "answer":
+        answer_text = decode_generated_text(tokenizer, token_ids).strip()
+        if not answer_text:
+            return DetectionResult(0, 0.5, 0.0, 0.5, threshold_z, False)
+        semantic_key = bucketizer.key_for_text(answer_text, encoder)
+        occurrences: dict[int, int] = {}
+        for token_id in token_ids:
+            token_id = int(token_id)
+            occurrence = occurrences.get(token_id, 0) + 1
+            occurrences[token_id] = occurrence
+            observed.append(
+                semantic_token_score(
+                    secret_key,
+                    semantic_key.bucket,
+                    occurrence,
+                    token_id,
+                )
+            )
+        return _detection_from_scores(observed, threshold_z=threshold_z)
+
+    tracker = SemanticContextTracker(
+        encoder=encoder,
+        bucketizer=bucketizer,
+        bootstrap_text=bootstrap_text,
+        context_paragraphs=context_paragraphs,
+    )
+    for token_id in token_ids:
+        token_id = int(token_id)
+        occurrence = tracker.next_token_occurrence(token_id)
+        observed.append(
+            semantic_token_score(
+                secret_key,
+                tracker.current_key.bucket,
+                occurrence,
+                token_id,
+            )
+        )
+        piece = tokenizer.decode([token_id], clean_up_tokenization_spaces=False)
+        tracker.observe_token(token_id, piece)
+
+    return _detection_from_scores(observed, threshold_z=threshold_z)
