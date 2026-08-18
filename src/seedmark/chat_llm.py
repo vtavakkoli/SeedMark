@@ -1,9 +1,9 @@
 """Chat-oriented real-Qwen adapter for SeedMark.
 
 The public demo should behave like a normal assistant conversation rather than a
-raw text-completion benchmark.  The user asks a question, Qwen's own chat template
+raw text-completion benchmark. The user asks a question, Qwen's own chat template
 builds the model input, and SeedMark modifies only the assistant's next-token
-sampling distribution.  Detection still sees only the generated assistant token
+sampling distribution. Detection still sees only the generated assistant token
 IDs, the first word of the user question, and the secret key.
 """
 
@@ -129,6 +129,7 @@ class ChatQwenSeedMark(QwenSeedMark):
         scores_seen: list[float] = []
         generator = torch.Generator(device="cpu")
         generator.manual_seed(rng_seed)
+        eos_id = int(self.tokenizer.eos_token_id)
 
         with torch.inference_mode():
             for position in range(1, max_new_tokens + 1):
@@ -148,6 +149,12 @@ class ChatQwenSeedMark(QwenSeedMark):
                 generation = marked if watermarked else base
                 chosen_index = int(torch.multinomial(generation, 1, generator=generator).item())
                 chosen_id = candidate_ids[chosen_index]
+
+                # EOS is a chat-control token, not visible assistant text. Do not add it
+                # to the watermark trace so saved text can be retokenized consistently.
+                if chosen_id == eos_id:
+                    break
+
                 chosen_score = keyed_scores[chosen_index]
                 scores_seen.append(chosen_score)
                 n = len(scores_seen)
@@ -186,14 +193,12 @@ class ChatQwenSeedMark(QwenSeedMark):
                 attention_mask = torch.cat(
                     (attention_mask, torch.ones_like(next_id)), dim=1
                 )
-                if chosen_id == int(self.tokenizer.eos_token_id):
-                    break
 
         answer = self.tokenizer.decode(
             generated_ids,
             skip_special_tokens=True,
             clean_up_tokenization_spaces=False,
-        ).strip()
+        )
         detection = detect_token_ids(
             generated_ids,
             secret_key=secret_key,
@@ -229,7 +234,7 @@ def detect_chat_text_with_tokenizer(
 ):
     """Retokenize a saved assistant answer using the same Qwen chat prefix.
 
-    Saved token IDs in the JSON trace remain authoritative.  This convenience path
+    Saved token IDs in the JSON trace remain authoritative. This convenience path
     intentionally loads only the tokenizer and does not load model weights.
     """
     _, AutoTokenizer, _ = _optional_stack()
