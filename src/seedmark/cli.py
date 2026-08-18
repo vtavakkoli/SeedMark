@@ -22,13 +22,12 @@ from .generation import generate_text
 from .hf_llm import DEFAULT_MODEL
 from .lm import ToyBigramLM
 from .model_cache import cache_home, prefetch_model
-from .semantic import DEFAULT_SEMANTIC_MODEL
+from .semantic import DEFAULT_SEMANTIC_MODEL, DEFAULT_SEMANTIC_SCOPE, SEMANTIC_SCOPES
 from .semantic_chat import (
     SemanticChatQwenSeedMark,
     detect_semantic_chat_text_with_tokenizer,
 )
 
-# Kept as a compatibility alias for callers that imported the old CLI constant.
 DEFAULT_QWEN_DEMO_PROMPT = DEFAULT_CHAT_QUESTION
 
 
@@ -71,6 +70,34 @@ def _add_real_generation_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--threshold-z", type=float, default=3.0)
     parser.add_argument("--secret-key", default="seedmark-demo-key")
     parser.add_argument("--rng-seed", type=int, default=20260817)
+
+
+def _add_semantic_scope_options(parser: argparse.ArgumentParser, *, generation: bool) -> None:
+    parser.add_argument(
+        "--semantic-scope",
+        choices=SEMANTIC_SCOPES,
+        default=DEFAULT_SEMANTIC_SCOPE,
+        help=(
+            "semantic key scope: 'answer' derives one key from the complete answer; "
+            "'paragraph' re-keys only at blank-line paragraph boundaries"
+        ),
+    )
+    parser.add_argument(
+        "--context-paragraphs",
+        type=int,
+        default=1,
+        help="number of completed paragraphs used to key the next paragraph",
+    )
+    if generation:
+        parser.add_argument(
+            "--max-answer-passes",
+            type=int,
+            default=4,
+            help=(
+                "maximum marked generations used to find a final answer in the same "
+                "semantic bucket as the complete-answer draft"
+            ),
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -138,7 +165,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     semantic = sub.add_parser(
         "semantic-qwen-demo",
-        help="run marked/control Qwen chat generation keyed by evolving answer semantics",
+        help="run marked/control Qwen chat generation keyed by answer or paragraph semantics",
     )
     semantic.add_argument("--model", default=DEFAULT_MODEL)
     semantic.add_argument("--semantic-model", default=DEFAULT_SEMANTIC_MODEL)
@@ -148,7 +175,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_chat_options(semantic)
     _add_real_generation_options(semantic)
     semantic.add_argument("--bucket-count", type=int, default=32)
-    semantic.add_argument("--context-sentences", type=int, default=1)
+    _add_semantic_scope_options(semantic, generation=True)
     semantic.add_argument(
         "--output-dir", type=Path, default=Path("results/semantic-qwen")
     )
@@ -172,7 +199,7 @@ def build_parser() -> argparse.ArgumentParser:
     semantic_detect.add_argument("--secret-key", default="seedmark-demo-key")
     semantic_detect.add_argument("--threshold-z", type=float, default=3.0)
     semantic_detect.add_argument("--bucket-count", type=int, default=32)
-    semantic_detect.add_argument("--context-sentences", type=int, default=1)
+    _add_semantic_scope_options(semantic_detect, generation=False)
     return parser
 
 
@@ -331,7 +358,9 @@ def main(argv: list[str] | None = None) -> int:
             threshold_z=args.threshold_z,
             rng_seed=args.rng_seed,
             bucket_count=args.bucket_count,
-            context_sentences=args.context_sentences,
+            semantic_scope=args.semantic_scope,
+            context_paragraphs=args.context_paragraphs,
+            max_answer_passes=args.max_answer_passes,
         )
         marked = lab.generate(**common, watermarked=True)
         control = lab.generate(**common, watermarked=False)
@@ -350,9 +379,14 @@ def main(argv: list[str] | None = None) -> int:
             "mode": "semantic-chat",
             "model": marked.model_name,
             "semantic_model": marked.semantic_model_name,
+            "semantic_scope": args.semantic_scope,
             "question": args.question,
             "bucket_count": args.bucket_count,
-            "context_sentences": args.context_sentences,
+            "context_paragraphs": args.context_paragraphs,
+            "answer_key_attempts": marked.answer_key_attempts,
+            "answer_key_stable": marked.answer_key_stable,
+            "semantic_bucket": marked.semantic_bucket,
+            "semantic_margin": marked.semantic_margin,
             "output_dir": str(args.output_dir),
             "watermarked": _detection_dict(marked.detection),
             "control": _detection_dict(control.detection),
@@ -381,11 +415,13 @@ def main(argv: list[str] | None = None) -> int:
             secret_key=args.secret_key,
             threshold_z=args.threshold_z,
             bucket_count=args.bucket_count,
-            context_sentences=args.context_sentences,
+            semantic_scope=args.semantic_scope,
+            context_paragraphs=args.context_paragraphs,
         )
         print(json.dumps({
             "seedmark_version": __version__,
             "mode": "semantic-chat",
+            "semantic_scope": args.semantic_scope,
             "generator_model_loaded": False,
             "semantic_model": args.semantic_model,
             "question": args.question,
