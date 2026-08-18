@@ -201,9 +201,9 @@ def _draw_chart(
     """Draw a chart with a dedicated header band so titles/metrics never overlap."""
     _panel(draw, box)
     x0, y0, x1, y1 = box
-    draw.text((x0 + 20, y0 + 14), title, font=fonts["section"], fill=BLUE)
-    draw.text((x1 - 150, y0 + 17), metric, font=fonts["small_bold"], fill=color)
-    px0, py0, px1, py1 = x0 + 62, y0 + 55, x1 - 24, y1 - 36
+    draw.text((x0 + 20, y0 + 12), title, font=fonts["section"], fill=BLUE)
+    draw.text((x0 + 20, y0 + 37), metric, font=fonts["small_bold"], fill=color)
+    px0, py0, px1, py1 = x0 + 62, y0 + 66, x1 - 24, y1 - 36
     draw.line((px0, py1, px1, py1), fill=GRAY, width=1)
     draw.line((px0, py0, px0, py1), fill=GRAY, width=1)
     if y_max <= y_min:
@@ -279,7 +279,7 @@ def _render_generation_frame(result: Any, step_index: int, *, width: int, height
     stats = cumulative_statistics(result, step_index)
     zs, _, shares = _history(result, step_index)
 
-    draw.text((42, 27), "SeedMark · how a small token nudge becomes a watermark", font=fonts["title"], fill=BLUE)
+    draw.text((42, 27), "SeedMark · watermark generation", font=fonts["title"], fill=BLUE)
     draw.text((43, 67), f"{result.model_name} · step {step.position}/{len(result.trace)} · top-k {result.top_k} · strength {result.strength:g}", font=fonts["subtitle"], fill=MUTED)
     _draw_candidates(draw, step, box=(34,100,width-34,385), fonts=fonts)
 
@@ -311,7 +311,7 @@ def _render_detection_frame(marked: Any, control: Any | None, step_index: int, *
         control_zs, _, _ = _history(control, min(step_index, len(control.trace)-1))
     detected = stats["z"] >= marked.detection.threshold_z
 
-    draw.text((42,27), "SeedMark · watermark detection from token IDs", font=fonts["title"], fill=BLUE)
+    draw.text((42,27), "SeedMark · watermark detection", font=fonts["title"], fill=BLUE)
     draw.text((43,67), f"token IDs + first-word seed + secret key · token {step_index+1}/{len(marked.trace)} · no model probabilities", font=fonts["subtitle"], fill=MUTED)
     badge = "WATERMARK DETECTED" if detected else "SIGNAL BUILDING"
     badge_color, badge_fill = (TEAL, TEAL_SOFT) if detected else (BLUE, BLUE_SOFT)
@@ -332,7 +332,6 @@ def _render_detection_frame(marked: Any, control: Any | None, step_index: int, *
         color=BLUE, fonts=fonts, threshold=marked.detection.threshold_z,
         threshold_label=f"decision z={marked.detection.threshold_z:g}", reference=control_zs or None,
     )
-
     left, right = (34,595,width//2-10,height-38), (width//2+10,595,width-34,height-38)
     conf_threshold = _confidence_from_z(marked.detection.threshold_z)
     _draw_chart(draw, confidences, box=left, title="One-sided confidence (1 − p)", metric=f"{stats['confidence']:.2%}", y_min=0, y_max=1, color=PINK, fonts=fonts, threshold=conf_threshold, threshold_label=f"z threshold ≈ {conf_threshold:.2%}")
