@@ -2,15 +2,30 @@
 
 SeedMark follows [Semantic Versioning](https://semver.org/) for the public Python package and CLI.
 
-## [Unreleased]
+## [0.6.0] - 2026-08-18
+
+### Added
+- A chat-first real-Qwen workflow using the tokenizer's native chat template and an assistant-generation marker.
+- Default user question: `What is AI?`.
+- A system instruction that requests a short plain-language article covering what AI is, where it is used, benefits, risks, and a brief conclusion.
+- `src/seedmark/chat_llm.py` for chat-template generation and tokenizer-only chat detection.
+- `--question` and `--system-prompt` CLI options; `--prompt` remains a backward-compatible alias for `--question`.
+- Docker Compose contract tests and chat-template unit tests.
 
 ### Changed
-- The default Qwen demonstration now asks for a short plain-language article answering “What is AI?” and uses a 128-token generation budget.
-- The real-LLM HTML report now leads with two explicit result cards and a marked-vs-control contrast: watermarked output vs control / without watermark.
+- The default Qwen workflow now simulates a normal AI conversation instead of raw text completion.
+- Only assistant-response tokens are watermarked and scored; system/user messages are context only.
+- The first normalized word of the user question is the public seed word (`what` for the default question).
+- The default Docker Compose experience is now the real Qwen chat demo: `docker compose up --build` downloads/caches Qwen, asks `What is AI?`, generates marked/control answers, and serves the report on port 8081.
+- The toy bigram Docker services moved behind the opt-in `toy` profile.
+- The default Qwen generation budget remains 128 assistant tokens.
+- The real-LLM HTML report leads with explicit marked/control result cards and a watermarked-vs-control contrast.
 - `generation.gif` and `detection.gif` use a sliding recent-context window for long text and highlight only the current token.
-- `detection.gif` now presents the marked z-curve, dashed control z-curve, decision threshold, one-sided confidence (`1-p`), and prioritized-token share in non-overlapping chart regions.
+- `detection.gif` presents the marked z-curve, dashed control z-curve, decision threshold, one-sided confidence (`1-p`), and prioritized-token share in non-overlapping chart regions.
 
 ### Fixed
+- Qwen chat-template rendering disables visible thinking output for the demo, preventing `<think>` / internal-reasoning text from appearing in the normal assistant article.
+- EOS is treated as a chat-control token and excluded from the visible watermark trace so saved assistant text remains consistent with tokenizer-only re-detection.
 - Long generated text no longer overlaps or hides the current highlighted token in GIF sentence panels.
 - Report status badges reflect the actual detector result and explicitly flag runs where the expected marked/control contrast is not achieved.
 
