@@ -1,15 +1,130 @@
 # SeedMark 🌱🔐
 
-**A chat-first, inspectable teaching lab for keyed pseudorandom text watermarking.**
+<p align="center">
+  <strong>A chat-first, inspectable teaching lab for keyed pseudorandom text watermarking.</strong>
+</p>
 
-SeedMark demonstrates one precise idea: **a detector can recover statistical correlation with a secret token-selection rule without receiving the language model's original next-token probability distribution.**
+<p align="center">
+  <img alt="Python 3.13+" src="https://img.shields.io/badge/Python-3.13%2B-3776AB?logo=python&logoColor=white">
+  <img alt="License MIT" src="https://img.shields.io/badge/License-MIT-2ea44f">
+  <img alt="Purpose Research and Education" src="https://img.shields.io/badge/Purpose-Research%20%26%20Education-6f42c1">
+</p>
+
+SeedMark demonstrates one focused idea:
+
+> **A detector can recover statistical correlation with a secret token-selection rule without receiving the language model's original next-token probability distribution.**
+
+The default experiment is deliberately easy to inspect. SeedMark asks a real chat model **“What is AI?”**, generates the answer once **with** watermarking and once **without** watermarking, and then runs the same detector on both outputs.
+
+| Watermarked answer | Control / no watermark |
+|---|---|
+| expected **Detected** | expected **Not detected** |
+| token sampling is keyed and biased | ordinary model sampling |
+| detector reconstructs keyed token scores | same detector, same threshold |
 
 > [!IMPORTANT]
-> SeedMark is a deliberately simplified educational algorithm. It is **not** Anthropic's production watermark, **not** Google SynthID-Text, **not** C2PA, and does not claim that any vendor uses this first-word-seeded construction.
+> SeedMark is a deliberately simplified **educational algorithm**. It is **not** Anthropic's production watermark, **not** Google SynthID-Text, **not** C2PA, and does not claim that any vendor uses this first-word-seeded construction.
 
-## Default experience: a real AI chat
+---
 
-The main demo now behaves like a normal assistant conversation rather than a raw text-completion benchmark.
+## 🎬 See SeedMark work
+
+### 1. Watermarked generation
+
+The generation animation shows the answer being produced token by token. The display keeps a sliding recent-context window so the text stays readable and highlights **only the token currently being generated**.
+
+<p align="center">
+  <img src="generation.gif" alt="SeedMark watermarked text generation animation" width="900">
+</p>
+
+**What to watch:**
+
+- Qwen produces the real next-token distribution;
+- SeedMark assigns deterministic keyed pseudorandom values to candidate token IDs;
+- the candidate probabilities are reweighted before sampling;
+- only the **current token** is highlighted;
+- previously generated text remains visible in a moving context window;
+- the visible answer still reads like a normal assistant article.
+
+[Open `generation.gif` directly](generation.gif)
+
+### 2. Statistical detection
+
+The detection animation shows what happens after generation. It compares the accumulated detector statistic for the **watermarked output** with the matched **control output**.
+
+<p align="center">
+  <img src="detection.gif" alt="SeedMark marked versus control detection animation" width="900">
+</p>
+
+**What to watch:**
+
+- the **marked z-curve** accumulates evidence from the selected tokens;
+- the **control z-curve** shows the same detector on text generated without watermarking;
+- the horizontal line is the configured detection threshold;
+- the report displays one-sided confidence as `1-p`;
+- the intended demonstration is **watermarked → Detected** and **control → Not detected**.
+
+[Open `detection.gif` directly](detection.gif)
+
+> [!NOTE]
+> `1-p` is confidence against this detector's null hypothesis. It is **not** a posterior probability that a text was written by AI.
+
+---
+
+## 🚀 Quick start with Docker Compose
+
+The real Qwen chat experiment is the default Docker Compose workflow:
+
+```bash
+docker compose up --build
+```
+
+SeedMark will:
+
+1. build the optimized Qwen image;
+2. download `Qwen/Qwen3.5-0.8B` only when it is not already in the persistent cache;
+3. ask **“What is AI?”** through Qwen's native chat template;
+4. generate one watermarked assistant article;
+5. generate one matched control article without the watermark;
+6. detect both outputs;
+7. create the GIFs, traces, text outputs, summary data, and `report.html`;
+8. serve the report at:
+
+```text
+http://localhost:8081/report.html
+```
+
+Stop the services with:
+
+```bash
+docker compose down
+```
+
+### Persistent model cache
+
+By default, Hugging Face model files are stored outside the repository:
+
+```text
+../seedmark-model-cache
+```
+
+That prevents the model from being downloaded again on every run.
+
+To choose another location, set for example:
+
+```text
+SEEDMARK_MODEL_CACHE=D:/model-cache/seedmark
+```
+
+in `.env`.
+
+The Qwen Dockerfile installs heavy dependencies **before** application source is copied, so normal source edits do not force PyTorch and Transformers to be reinstalled.
+
+---
+
+## 💬 Default experience: a real AI chat
+
+SeedMark behaves like an assistant conversation rather than a raw completion benchmark.
 
 ```text
 System:
@@ -24,123 +139,47 @@ Assistant:
 <article generated by Qwen>
 ```
 
-SeedMark uses **Qwen's native chat template** and adds the assistant-generation marker before sampling. Thinking/reasoning output is disabled for the demo so the visible result is the requested plain-language article, not `<think>` or internal-analysis text.
+SeedMark uses **Qwen's native chat template** and adds the assistant-generation marker before sampling. Thinking/reasoning output is disabled for the default demo so the visible output is the requested article rather than internal reasoning text.
 
-The same chat request is generated twice:
-
-```text
-same system instruction + same user question
-                    │
-          ┌─────────┴─────────┐
-          │                   │
-   SeedMark enabled      SeedMark disabled
-          │                   │
- watermarked answer       control answer
-          │                   │
-      detector             detector
-          │                   │
-     Detected          expected Not detected
-```
-
-The detector uses the generated assistant token IDs, the first word of the user question (`what` for `What is AI?`), and the secret key. It does **not** need Qwen logits, hidden states, or model weights.
-
-## Run with Docker Compose
-
-The real Qwen chat experiment is now the **default Docker Compose workflow**.
-
-```bash
-docker compose up --build
-```
-
-Compose will:
-
-1. build the optimized Qwen image;
-2. download `Qwen/Qwen3.5-0.8B` only if it is not already in the persistent host cache;
-3. ask **“What is AI?”** through Qwen's chat template;
-4. generate one watermarked assistant article and one control article;
-5. create `generation.gif`, `detection.gif`, JSON traces, text outputs, and `report.html`;
-6. serve the report at:
+The identical chat request is evaluated through two generation paths:
 
 ```text
-http://localhost:8081/report.html
+                      What is AI?
+                           │
+                  same chat context
+                           │
+               ┌───────────┴───────────┐
+               │                       │
+       SeedMark enabled         SeedMark disabled
+               │                       │
+     watermarked answer          control answer
+               │                       │
+               └───────────┬───────────┘
+                           │
+                    same detector
+                           │
+              ┌────────────┴────────────┐
+              │                         │
+          Detected              expected Not detected
 ```
 
-Stop the services with:
+The detector uses:
 
-```bash
-docker compose down
-```
+- the generated assistant token IDs;
+- the first word of the user question (`what` for `What is AI?`);
+- the secret key.
 
-### Persistent model cache
+It does **not** need Qwen logits, hidden states, or model weights during detection.
 
-The Hugging Face cache is stored outside the repository by default:
+---
 
-```text
-../seedmark-model-cache
-```
+## 🧠 How the watermark works
 
-So the model is not downloaded again on every run. To use another location, set for example:
+Only the **assistant response tokens** are watermarked. The system message and user question remain ordinary chat context.
 
-```text
-SEEDMARK_MODEL_CACHE=D:/model-cache/seedmark
-```
+At every assistant-token position, Qwen provides its real top-k next-token distribution `p(v)`.
 
-in `.env`.
-
-The Qwen Dockerfile also installs heavy dependencies **before** copying application source, so editing SeedMark code does not force PyTorch/Transformers to reinstall.
-
-## Local chat demo
-
-Install the optional real-LLM dependencies:
-
-```bash
-python -m pip install -e ".[real-llm]"
-```
-
-Then run:
-
-```bash
-seedmark qwen-demo --output-dir results/qwen
-```
-
-The defaults are:
-
-| Parameter | Default |
-|---|---|
-| model | `Qwen/Qwen3.5-0.8B` |
-| user question | `What is AI?` |
-| output style | short plain-language article |
-| max assistant tokens | `128` |
-| top-k | `20` |
-| temperature | `1.0` |
-| watermark strength | `1.5` |
-| detector threshold | `z = 3.0` |
-| RNG seed | `20260817` |
-
-Ask another question normally:
-
-```bash
-seedmark qwen-demo \
-  --question "What is edge AI?" \
-  --max-new-tokens 128 \
-  --output-dir results/edge-ai
-```
-
-`--prompt` remains available as a backward-compatible alias for `--question`.
-
-You can also override the system instruction:
-
-```bash
-seedmark qwen-demo \
-  --question "What is AI?" \
-  --system-prompt "Answer in simple language for a general audience."
-```
-
-## What is actually watermarked?
-
-Only the **assistant response tokens** are watermarked. The system message and user question are ordinary chat context.
-
-At each assistant-token position, Qwen provides its real top-k next-token distribution `p(v)`. SeedMark assigns every candidate token ID a deterministic keyed value:
+SeedMark assigns each candidate token ID a deterministic keyed value:
 
 ```text
 u(t,v) = HMAC-SHA256(
@@ -149,27 +188,56 @@ u(t,v) = HMAC-SHA256(
 ) → [0,1)
 ```
 
-Watermarked generation samples from:
+Watermarked generation samples from a reweighted distribution:
 
 ```text
 q(v) ∝ p(v) · exp(strength · (2u(t,v) - 1))
 ```
 
-The matched control samples from the original Qwen distribution `p(v)`.
+The matched control samples directly from the original model distribution:
 
-Detection reconstructs only the chosen-token `u` values:
+```text
+p(v)
+```
+
+So the experiment changes the sampling rule, **not** the detector after the fact.
+
+### Detection
+
+For the selected output tokens, the detector reconstructs their keyed `u` values and computes:
 
 ```text
 z = Σ(u_t - 0.5) / sqrt(n / 12)
 ```
 
-This keeps the main scientific experiment clear:
+The central separation is therefore:
 
-> **generation needs the model distribution; detection does not.**
+> **Generation needs the model distribution. Detection does not.**
 
-## Report
+That is the core property SeedMark is designed to make visible and easy to study.
 
-The Qwen run writes:
+---
+
+## 🧪 Why the control matters
+
+A watermark demo is much more informative when it shows both sides of the experiment.
+
+SeedMark therefore reports the pair explicitly:
+
+```text
+Watermarked output  → detector → expected DETECTED
+Control output      → detector → expected NOT DETECTED
+```
+
+The control is generated from the same chat setup but without SeedMark's probability reweighting. This makes it easier to see whether the detector is responding to the keyed sampling signal rather than simply producing a high score for any model-generated text.
+
+The report does **not** hard-code success. If a stochastic run does not produce the intended marked/control separation, the result is labeled **Review this run**.
+
+---
+
+## 📊 Generated report
+
+A default Qwen run produces:
 
 ```text
 results/qwen/
@@ -185,28 +253,78 @@ results/qwen/
 └── summary.json
 ```
 
-`generated_watermarked.txt` and `generated_control.txt` contain the **assistant answers only**, making the comparison read like a real chat response rather than a prompt continuation.
+`generated_watermarked.txt` and `generated_control.txt` contain the **assistant answers only**, so they can be compared directly as normal chat responses.
 
-The HTML report provides:
+The HTML report includes:
 
-- the user/assistant chat prompt;
+- the system/user chat context;
 - a clear **Watermarked → Detected** result card;
-- a clear **Control / without watermark → Not detected** result card when the run achieves that contrast;
+- a clear **Control / without watermark → Not detected** result card when that contrast is achieved;
 - side-by-side assistant articles;
-- embedded `generation.gif` and `detection.gif`;
-- the marked z-curve and matched control z-curve;
+- the animated generation walkthrough;
+- the animated detection walkthrough;
+- marked and control z-curves;
 - the decision threshold;
 - one-sided confidence (`1-p`);
 - prioritized-token share;
 - raw token traces for inspection.
 
-Badges always reflect the actual run. If the expected marked/control contrast is not achieved, the report says **Review this run** rather than hard-coding a successful result.
+---
 
-`1-p` is confidence against this detector's null hypothesis. It is **not** a posterior probability that text was written by AI.
+## 🖥️ Run locally
 
-## Detect a saved assistant answer
+Install the real-LLM dependencies:
 
-The authoritative detector input is the saved token-ID trace. A convenience text detector is also available and loads only the tokenizer, not model weights:
+```bash
+python -m pip install -e ".[real-llm]"
+```
+
+Run the default chat experiment:
+
+```bash
+seedmark qwen-demo --output-dir results/qwen
+```
+
+### Default parameters
+
+| Parameter | Default |
+|---|---|
+| Model | `Qwen/Qwen3.5-0.8B` |
+| User question | `What is AI?` |
+| Output style | short plain-language article |
+| Max assistant tokens | `128` |
+| Top-k | `20` |
+| Temperature | `1.0` |
+| Watermark strength | `1.5` |
+| Detector threshold | `z = 3.0` |
+| RNG seed | `20260817` |
+
+Ask another question:
+
+```bash
+seedmark qwen-demo \
+  --question "What is edge AI?" \
+  --max-new-tokens 128 \
+  --output-dir results/edge-ai
+```
+
+`--prompt` remains available as a backward-compatible alias for `--question`.
+
+Override the system instruction:
+
+```bash
+seedmark qwen-demo \
+  --question "What is AI?" \
+  --system-prompt "Answer in simple language for a general audience."
+```
+
+---
+
+## 🔎 Detect a saved assistant answer
+
+The authoritative detector input is the saved token-ID trace.
+
+A convenience text detector is also available and loads only the tokenizer, not the model weights:
 
 ```bash
 seedmark qwen-detect \
@@ -214,11 +332,13 @@ seedmark qwen-detect \
   --text-file results/qwen/generated_watermarked.txt
 ```
 
-The same chat template and question must be supplied because they define the generation context and the first-word seed.
+The same chat template and question must be supplied because they define the generation context and the first-word seed used by this educational construction.
 
-## Toy baseline
+---
 
-The transparent `ToyBigramLM` experiment remains available for teaching and Monte Carlo calibration, but it is no longer the default Docker experience.
+## 🧸 Toy baseline
+
+The transparent `ToyBigramLM` experiment remains available for teaching, debugging, and Monte Carlo calibration, but it is no longer the default Docker experience.
 
 Run it locally:
 
@@ -238,7 +358,9 @@ Then open:
 http://localhost:8080/report.html
 ```
 
-## Model cache helper
+---
+
+## 📦 Model cache helper
 
 Prefetch the model explicitly with:
 
@@ -252,9 +374,39 @@ or locally:
 seedmark qwen-cache --model Qwen/Qwen3.5-0.8B
 ```
 
-## Versioning
+---
 
-SeedMark follows Semantic Versioning and has one package-version source of truth:
+## 🗂️ Repository layout
+
+```text
+src/seedmark/chat_llm.py    real chat-template Qwen workflow
+src/seedmark/hf_llm.py      token-watermark primitives / raw adapter
+src/seedmark/animation.py   generation and detection GIFs
+src/seedmark/reporting.py   standalone HTML comparison report
+src/seedmark/model_cache.py persistent model-cache helpers
+src/seedmark/cli.py         command-line interface
+requirements/               Docker dependency manifests
+tests/                      deterministic tests and GIF smoke tests
+docs/                       method, limitations, real-LLM notes
+Dockerfile.qwen             optimized real-Qwen image
+docker-compose.yml          default chat demo + opt-in toy profile
+```
+
+---
+
+## ✅ Tests
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+CI validates unit tests, package build, reproducible toy reporting, multi-frame GIF rendering, and the Docker build. Normal CI does not download Qwen weights.
+
+---
+
+## 🏷️ Versioning
+
+SeedMark follows Semantic Versioning and keeps one package-version source of truth.
 
 ```bash
 seedmark --version
@@ -267,34 +419,35 @@ print(seedmark.__version__)
 
 See [`CHANGELOG.md`](CHANGELOG.md) and [`docs/versioning.md`](docs/versioning.md).
 
-## Repository layout
+---
 
-```text
-src/seedmark/chat_llm.py    real chat-template Qwen workflow
-src/seedmark/hf_llm.py      token watermark primitives / raw adapter
-src/seedmark/animation.py   generation and detection GIFs
-src/seedmark/reporting.py   standalone HTML comparison report
-src/seedmark/model_cache.py persistent model-cache helpers
-src/seedmark/cli.py         command-line interface
-requirements/               Docker dependency manifests
-tests/                      deterministic tests and GIF smoke tests
-docs/                       method, limitations, real-LLM notes
-Dockerfile.qwen             optimized real-Qwen image
-docker-compose.yml          default chat demo + opt-in toy profile
-```
+## 🔬 Scientific scope and limitations
 
-## Tests
+SeedMark is intended for:
 
-```bash
-python -m unittest discover -s tests -v
-```
+- lectures and demonstrations;
+- reproducible research discussions;
+- inspection of token-level watermark mechanics;
+- experiments comparing marked and unmarked generation;
+- a minimal baseline before studying production-grade text watermarking systems.
 
-CI validates unit tests, package build, reproducible toy reporting, multi-frame GIF rendering, and the Docker build. Normal CI does not download Qwen weights.
+It should **not** be treated as a production provenance mechanism, universal AI-text detector, or claim about any commercial watermark implementation.
 
-## Scientific scope
+Before interpreting detector scores, read:
 
-SeedMark is useful for lectures, research discussions, and as a minimal baseline before experimenting with production-grade tokenizer-level watermark algorithms. Please read [`docs/limitations.md`](docs/limitations.md) and [`docs/real-llm.md`](docs/real-llm.md) before interpreting detector scores.
+- [`docs/limitations.md`](docs/limitations.md)
+- [`docs/real-llm.md`](docs/real-llm.md)
 
-## License
+---
 
-SeedMark code is MIT. Qwen3.5 model weights are distributed separately under their model license.
+## 🤝 Contributing
+
+Contributions, experiments, bug reports, and reproducibility improvements are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+If you use SeedMark in research work, repository citation metadata is available in [`CITATION.cff`](CITATION.cff).
+
+## 📄 License
+
+SeedMark code is released under the [`MIT License`](LICENSE).
+
+Qwen3.5 model weights are distributed separately under their own model license.
