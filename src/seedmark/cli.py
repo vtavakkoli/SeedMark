@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 import json
 from pathlib import Path
 
@@ -21,6 +22,11 @@ from .generation import generate_text
 from .hf_llm import DEFAULT_MODEL
 from .lm import ToyBigramLM
 from .model_cache import cache_home, prefetch_model
+from .semantic import DEFAULT_SEMANTIC_MODEL
+from .semantic_chat import (
+    SemanticChatQwenSeedMark,
+    detect_semantic_chat_text_with_tokenizer,
+)
 
 # Kept as a compatibility alias for callers that imported the old CLI constant.
 DEFAULT_QWEN_DEMO_PROMPT = DEFAULT_CHAT_QUESTION
@@ -51,10 +57,26 @@ def _add_chat_options(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_real_generation_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=128,
+        help="maximum generated assistant tokens per marked/control answer (default: 128)",
+    )
+    parser.add_argument("--device", default="auto", choices=("auto", "cpu", "cuda", "mps"))
+    parser.add_argument("--temperature", type=float, default=1.0)
+    parser.add_argument("--top-k", type=int, default=20)
+    parser.add_argument("--strength", type=float, default=1.5)
+    parser.add_argument("--threshold-z", type=float, default=3.0)
+    parser.add_argument("--secret-key", default="seedmark-demo-key")
+    parser.add_argument("--rng-seed", type=int, default=20260817)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="seedmark",
-        description="First-word-seeded keyed pseudorandom text-watermark teaching lab",
+        description="Inspectable token and semantic self-key text-watermark research lab",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -91,19 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     qwen.add_argument("--model", default=DEFAULT_MODEL)
     _add_chat_options(qwen)
-    qwen.add_argument(
-        "--max-new-tokens",
-        type=int,
-        default=128,
-        help="maximum generated assistant tokens per marked/control answer (default: 128)",
-    )
-    qwen.add_argument("--device", default="auto", choices=("auto", "cpu", "cuda", "mps"))
-    qwen.add_argument("--temperature", type=float, default=1.0)
-    qwen.add_argument("--top-k", type=int, default=20)
-    qwen.add_argument("--strength", type=float, default=1.5)
-    qwen.add_argument("--threshold-z", type=float, default=3.0)
-    qwen.add_argument("--secret-key", default="seedmark-demo-key")
-    qwen.add_argument("--rng-seed", type=int, default=20260817)
+    _add_real_generation_options(qwen)
     qwen.add_argument("--output-dir", type=Path, default=Path("results/qwen"))
     qwen.add_argument("--gif-frame-ms", type=int, default=650, help="GIF frame duration in milliseconds")
     qwen.add_argument("--gif-width", type=int, default=1200, help="GIF/preview width in pixels")
@@ -125,7 +135,56 @@ def build_parser() -> argparse.ArgumentParser:
     qsource.add_argument("--text-file", type=Path)
     qdetect.add_argument("--secret-key", default="seedmark-demo-key")
     qdetect.add_argument("--threshold-z", type=float, default=3.0)
+
+    semantic = sub.add_parser(
+        "semantic-qwen-demo",
+        help="run marked/control Qwen chat generation keyed by evolving answer semantics",
+    )
+    semantic.add_argument("--model", default=DEFAULT_MODEL)
+    semantic.add_argument("--semantic-model", default=DEFAULT_SEMANTIC_MODEL)
+    semantic.add_argument(
+        "--semantic-device", default="cpu", choices=("auto", "cpu", "cuda", "mps")
+    )
+    _add_chat_options(semantic)
+    _add_real_generation_options(semantic)
+    semantic.add_argument("--bucket-count", type=int, default=32)
+    semantic.add_argument("--context-sentences", type=int, default=1)
+    semantic.add_argument(
+        "--output-dir", type=Path, default=Path("results/semantic-qwen")
+    )
+
+    semantic_detect = sub.add_parser(
+        "semantic-qwen-detect",
+        help=(
+            "retokenize a saved semantic-watermarked Qwen answer and detect without "
+            "loading generator model weights"
+        ),
+    )
+    semantic_detect.add_argument("--model", default=DEFAULT_MODEL)
+    semantic_detect.add_argument("--semantic-model", default=DEFAULT_SEMANTIC_MODEL)
+    semantic_detect.add_argument(
+        "--semantic-device", default="cpu", choices=("auto", "cpu", "cuda", "mps")
+    )
+    _add_chat_options(semantic_detect)
+    semantic_source = semantic_detect.add_mutually_exclusive_group(required=True)
+    semantic_source.add_argument("--text")
+    semantic_source.add_argument("--text-file", type=Path)
+    semantic_detect.add_argument("--secret-key", default="seedmark-demo-key")
+    semantic_detect.add_argument("--threshold-z", type=float, default=3.0)
+    semantic_detect.add_argument("--bucket-count", type=int, default=32)
+    semantic_detect.add_argument("--context-sentences", type=int, default=1)
     return parser
+
+
+def _detection_dict(result) -> dict[str, object]:
+    return {
+        "n_scored_tokens": result.n_scored_tokens,
+        "mean_score": result.mean_score,
+        "z_score": result.z_score,
+        "p_value_one_sided": result.p_value_one_sided,
+        "threshold_z": result.threshold_z,
+        "detected": result.detected,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -157,12 +216,7 @@ def main(argv: list[str] | None = None) -> int:
         result = detect_tokens(tokens, secret_key=args.secret_key, threshold_z=args.threshold_z)
         print(json.dumps({
             "seedmark_version": __version__,
-            "n_scored_tokens": result.n_scored_tokens,
-            "mean_score": result.mean_score,
-            "z_score": result.z_score,
-            "p_value_one_sided": result.p_value_one_sided,
-            "threshold_z": result.threshold_z,
-            "detected": result.detected,
+            **_detection_dict(result),
         }, indent=2))
         return 0
 
@@ -255,11 +309,87 @@ def main(argv: list[str] | None = None) -> int:
             "mode": "chat",
             "model_loaded": False,
             "question": args.question,
-            "n_scored_tokens": result.n_scored_tokens,
-            "mean_score": result.mean_score,
-            "z_score": result.z_score,
-            "p_value_one_sided": result.p_value_one_sided,
-            "detected": result.detected,
+            **_detection_dict(result),
+        }, indent=2))
+        return 0
+
+    if args.command == "semantic-qwen-demo":
+        lab = SemanticChatQwenSeedMark(
+            args.model,
+            args.device,
+            semantic_model=args.semantic_model,
+            semantic_device=args.semantic_device,
+        )
+        common = dict(
+            question=args.question,
+            system_prompt=args.system_prompt,
+            max_new_tokens=args.max_new_tokens,
+            secret_key=args.secret_key,
+            strength=args.strength,
+            top_k=args.top_k,
+            temperature=args.temperature,
+            threshold_z=args.threshold_z,
+            rng_seed=args.rng_seed,
+            bucket_count=args.bucket_count,
+            context_sentences=args.context_sentences,
+        )
+        marked = lab.generate(**common, watermarked=True)
+        control = lab.generate(**common, watermarked=False)
+
+        args.output_dir.mkdir(parents=True, exist_ok=True)
+        (args.output_dir / "generated_watermarked.txt").write_text(marked.text, encoding="utf-8")
+        (args.output_dir / "generated_control.txt").write_text(control.text, encoding="utf-8")
+        (args.output_dir / "watermarked-trace.json").write_text(
+            json.dumps(asdict(marked), indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        (args.output_dir / "control-trace.json").write_text(
+            json.dumps(asdict(control), indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        summary = {
+            "seedmark_version": __version__,
+            "mode": "semantic-chat",
+            "model": marked.model_name,
+            "semantic_model": marked.semantic_model_name,
+            "question": args.question,
+            "bucket_count": args.bucket_count,
+            "context_sentences": args.context_sentences,
+            "output_dir": str(args.output_dir),
+            "watermarked": _detection_dict(marked.detection),
+            "control": _detection_dict(control.detection),
+            "comparison": (
+                "watermarked output -> detected; control -> not detected"
+                if marked.detection.detected and not control.detection.detected
+                else "review this run: expected marked/control contrast was not achieved"
+            ),
+        }
+        (args.output_dir / "summary.json").write_text(
+            json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        print(json.dumps(summary, indent=2, ensure_ascii=False))
+        print(f"\nSemantic experiment written to {args.output_dir}")
+        return 0
+
+    if args.command == "semantic-qwen-detect":
+        text = args.text if args.text is not None else args.text_file.read_text(encoding="utf-8")
+        result = detect_semantic_chat_text_with_tokenizer(
+            model_name=args.model,
+            semantic_model=args.semantic_model,
+            semantic_device=args.semantic_device,
+            text=text,
+            question=args.question,
+            system_prompt=args.system_prompt,
+            secret_key=args.secret_key,
+            threshold_z=args.threshold_z,
+            bucket_count=args.bucket_count,
+            context_sentences=args.context_sentences,
+        )
+        print(json.dumps({
+            "seedmark_version": __version__,
+            "mode": "semantic-chat",
+            "generator_model_loaded": False,
+            "semantic_model": args.semantic_model,
+            "question": args.question,
+            **_detection_dict(result),
         }, indent=2))
         return 0
 
