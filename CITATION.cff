@@ -5,8 +5,8 @@ type: software
 authors:
   - family-names: Tavakkoli
     given-names: Vahid
-version: 0.5.0
-date-released: 2026-08-17
+version: 0.6.0
+date-released: 2026-08-18
 license: MIT
 repository-code: "https://github.com/vtavakkoli/SeedMark"
 keywords:
