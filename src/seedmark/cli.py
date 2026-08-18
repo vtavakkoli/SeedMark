@@ -17,6 +17,12 @@ from .model_cache import cache_home, prefetch_model
 from .reporting import write_qwen_report
 
 
+DEFAULT_QWEN_DEMO_PROMPT = (
+    "Write a short plain-language article answering: What is AI? Explain what AI is, "
+    "where it is used, benefits, risks, and conclude briefly."
+)
+
+
 def _add_common_config(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--secret-key", default="seedmark-demo-key")
     parser.add_argument("--strength", type=float, default=1.5)
@@ -60,8 +66,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     qwen = sub.add_parser("qwen-demo", help="run a matched real-Qwen marked/control experiment")
     qwen.add_argument("--model", default=DEFAULT_MODEL)
-    qwen.add_argument("--prompt", default="Research is")
-    qwen.add_argument("--max-new-tokens", type=int, default=64)
+    qwen.add_argument("--prompt", default=DEFAULT_QWEN_DEMO_PROMPT)
+    qwen.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=128,
+        help="maximum generated tokens per marked/control article (default: 128)",
+    )
     qwen.add_argument("--device", default="auto", choices=("auto", "cpu", "cuda", "mps"))
     qwen.add_argument("--temperature", type=float, default=1.0)
     qwen.add_argument("--top-k", type=int, default=20)
@@ -81,7 +92,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     qdetect = sub.add_parser("qwen-detect", help="retokenize Qwen text and detect without loading model weights")
     qdetect.add_argument("--model", default=DEFAULT_MODEL)
-    qdetect.add_argument("--prompt", default="Research is")
+    qdetect.add_argument("--prompt", default=DEFAULT_QWEN_DEMO_PROMPT)
     qsource = qdetect.add_mutually_exclusive_group(required=True)
     qsource.add_argument("--text")
     qsource.add_argument("--text-file", type=Path)
@@ -169,6 +180,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({
             "seedmark_version": __version__,
             "model": marked.model_name,
+            "prompt": marked.prompt,
             "cache_home": str(cache_home()),
             "output_dir": str(args.output_dir),
             "report": str(report_path),
@@ -177,6 +189,11 @@ def main(argv: list[str] | None = None) -> int:
             "watermarked_detected": marked.detection.detected,
             "control_z": control.detection.z_score,
             "control_detected": control.detection.detected,
+            "comparison": (
+                "watermarked output -> detected; control -> not detected"
+                if marked.detection.detected and not control.detection.detected
+                else "review this run: expected marked/control contrast was not achieved"
+            ),
             "generated_tokens": len(marked.generated_token_ids),
         }, indent=2))
         print(f"\nOpen {report_path}")

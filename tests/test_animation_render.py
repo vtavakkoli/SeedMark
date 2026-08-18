@@ -12,6 +12,10 @@ from seedmark.animation import write_detection_gif, write_generation_gif, write_
 
 
 PIL_AVAILABLE = importlib.util.find_spec("PIL") is not None
+ARTICLE_PROMPT = (
+    "Write a short plain-language article answering: What is AI? Explain what AI is, "
+    "where it is used, benefits, risks, and conclude briefly."
+)
 
 
 def candidate(token_id: int, text: str, base: float, marked: float, score: float, chosen: bool = False):
@@ -28,9 +32,9 @@ def candidate(token_id: int, text: str, base: float, marked: float, score: float
 def sample_results():
     marked_steps = []
     control_steps = []
-    marked_scores = (0.91, 0.82, 0.78)
-    control_scores = (0.22, 0.63, 0.41)
-    tokens = (" useful", " because", " evidence")
+    marked_scores = (0.91, 0.82, 0.78, 0.84, 0.76)
+    control_scores = (0.22, 0.63, 0.41, 0.52, 0.44)
+    tokens = (" Artificial", " intelligence", " helps", " people", " today.")
     for position, (token, marked_u, control_u) in enumerate(zip(tokens, marked_scores, control_scores), start=1):
         candidates = (
             candidate(10 + position, token, 0.30, 0.43, marked_u, True),
@@ -62,7 +66,7 @@ def sample_results():
             candidates=candidates,
         ))
 
-    common = dict(model_name="Qwen/test", prompt="Research is", top_k=3, strength=1.5)
+    common = dict(model_name="Qwen/test", prompt=ARTICLE_PROMPT, top_k=3, strength=1.5)
     marked = SimpleNamespace(
         **common,
         trace=tuple(marked_steps),
@@ -100,7 +104,7 @@ class AnimationRenderTests(unittest.TestCase):
                     else:
                         self.assertEqual(image.format, "PNG")
 
-    def test_individual_gif_writers_are_valid(self) -> None:
+    def test_individual_gif_writers_are_valid_with_long_article_prompt(self) -> None:
         from PIL import Image
 
         marked, control = sample_results()
@@ -111,6 +115,7 @@ class AnimationRenderTests(unittest.TestCase):
             for path in (generation, detection):
                 with Image.open(path) as image:
                     self.assertGreaterEqual(image.n_frames, 2)
+                    self.assertEqual(image.size, (900, 900))
 
 
 if __name__ == "__main__":

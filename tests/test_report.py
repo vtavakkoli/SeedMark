@@ -1,4 +1,4 @@
-"""Tests for the standalone real-LLM scientific report."""
+"""Tests for the standalone real-LLM comparison report."""
 
 from __future__ import annotations
 
@@ -10,6 +10,12 @@ import unittest
 from seedmark.core import DetectionResult
 from seedmark.hf_llm import HFCandidateTrace, HFGenerationResult, HFStepTrace
 from seedmark.reporting import write_qwen_report
+
+
+ARTICLE_PROMPT = (
+    "Write a short plain-language article answering: What is AI? Explain what AI is, "
+    "where it is used, benefits, risks, and conclude briefly."
+)
 
 
 def sample_result(*, watermarked: bool, score: float, z: float) -> HFGenerationResult:
@@ -41,9 +47,9 @@ def sample_result(*, watermarked: bool, score: float, z: float) -> HFGenerationR
     )
     return HFGenerationResult(
         model_name="Qwen/test",
-        prompt="Research is",
-        first_word="research",
-        text="Research is useful",
+        prompt=ARTICLE_PROMPT,
+        first_word="write",
+        text=ARTICLE_PROMPT + " useful",
         continuation=" useful",
         prompt_token_ids=(1, 2),
         generated_token_ids=(42,),
@@ -58,7 +64,7 @@ def sample_result(*, watermarked: bool, score: float, z: float) -> HFGenerationR
 
 
 class ReportTests(unittest.TestCase):
-    def test_report_embeds_visual_assets_and_scientific_caveat(self) -> None:
+    def test_report_makes_detected_vs_not_detected_contrast_obvious(self) -> None:
         marked = sample_result(watermarked=True, score=0.91, z=3.2)
         control = sample_result(watermarked=False, score=0.48, z=-0.1)
         assets = {
@@ -71,13 +77,25 @@ class ReportTests(unittest.TestCase):
             root = Path(temp)
             report = write_qwen_report(root, marked, control, assets=assets)
             html = report.read_text(encoding="utf-8")
+
             self.assertIn('src="generation.gif"', html)
             self.assertIn('src="detection.gif"', html)
-            self.assertIn("Interactive token microscope", html)
+            self.assertIn('class="card result marked"', html)
+            self.assertIn('class="card result control"', html)
+            self.assertIn("Watermarked output", html)
+            self.assertIn("Control / without watermark", html)
+            self.assertIn(">Detected</span>", html)
+            self.assertIn(">Not detected</span>", html)
+            self.assertIn("sliding recent-context window", html)
             self.assertIn("not a posterior probability", html)
+            self.assertIn(ARTICLE_PROMPT, html)
+
             summary = json.loads((root / "summary.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["visual_assets"], assets)
             self.assertEqual(summary["decision_threshold"]["z"], 3.0)
+            self.assertEqual(summary["comparison"]["watermarked_label"], "Detected")
+            self.assertEqual(summary["comparison"]["control_label"], "Not detected")
+            self.assertTrue(summary["comparison"]["expected_contrast_achieved"])
 
     def test_report_without_gifs_has_clear_placeholder(self) -> None:
         marked = sample_result(watermarked=True, score=0.70, z=1.0)
@@ -86,6 +104,7 @@ class ReportTests(unittest.TestCase):
             report = write_qwen_report(Path(temp), marked, control, assets={})
             html = report.read_text(encoding="utf-8")
             self.assertIn("Animation disabled for this run", html)
+            self.assertIn("Review this run", html)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # Animated generation and detection report
 
-Real-Qwen experiments now create **two complementary animations** plus static poster previews:
+Real-Qwen runs create two complementary GIFs plus static PNG previews:
 
 ```text
 results/qwen/
@@ -16,96 +16,56 @@ results/qwen/
 └── summary.json
 ```
 
-All visuals are rendered **after inference from the recorded SeedMark trace**. Qwen is not run a second time.
+The visualizations are rendered from the recorded traces after inference; Qwen is not run again to build the GIFs.
 
-## 1. `generation.gif` — how the watermark changes token choice
+## `generation.gif`
 
-Each frame is one generation step and contains three linked views:
+Each frame links the model distribution to the chosen token and the accumulating detector signal:
 
-1. **Next-token distribution.** The gray dashed curve is the real Qwen base distribution. The overlaid curve is the SeedMark-adjusted distribution.
-2. **Live sentence construction.** The prompt and already generated text are normal. The **token selected at the current step is the only token highlighted in pink**.
-3. **Signal history.** The cumulative z-score and the share of selected tokens in the keyed preferred half show how tiny local changes accumulate.
+- dashed curve: base Qwen top-k probabilities;
+- solid curve: SeedMark-adjusted probabilities;
+- teal/coral candidate markers: keyed preference direction;
+- pink ring: candidate selected on this step;
+- sentence panel: a **sliding recent-context window**;
+- pink sentence highlight: **only the current appended token**;
+- lower charts: cumulative z-score and prioritized-token share.
 
-Candidate markers use:
+The recent-context window is intentionally left-clipped as a generation grows. Historical whitespace is compacted, long fragments are split to the available width, and the current token is kept separate from history. This prevents long article output from overlapping the panel or hiding the current token.
 
-- **teal:** keyed score `u ≥ 0.5`, so the multiplicative watermark factor is at least one;
-- **coral:** keyed score `u < 0.5`, so the multiplicative factor is below one;
-- **pink outline:** the token actually selected at that step.
+## `detection.gif`
 
-For a trace
+The detection animation shows the detector's view of the same experiment. It uses observed token IDs, the normalized first-word seed and the secret key; it does not use Qwen logits or next-token probabilities.
 
-```text
-prompt: Research is
-step 1: " useful"
-step 2: " because"
-step 3: " evidence"
-```
+The main evidence panel contains:
 
-frame 2 renders conceptually as:
+- **solid marked z-curve**;
+- **dashed control / without-watermark z-curve**;
+- **red decision-threshold line**.
 
-```text
-Research is useful [because]
-                    ^ current token
-```
+The lower panels show:
 
-The current token is intentionally excluded from the normal prefix until its own frame. This prevents an older occurrence of the same word from being highlighted accidentally.
+- one-sided confidence `1-p`;
+- prioritized-token share, with the null reference at `0.5`.
 
-## 2. `detection.gif` — how detection works without Qwen probabilities
+The sentence view also uses a sliding recent-context window. Historical tokens are deliberately not highlighted; only the current observed token is outlined so the animation cannot visually confuse an old occurrence with the current step.
 
-The detection animation replays the observed token sequence from the detector's point of view.
+> `1-p` is confidence against SeedMark's detector null model. It is not a posterior probability that a passage was written by AI.
 
-It shows:
+## Default article demonstration
 
-- the observed sentence, with selected tokens colored by their keyed score;
-- the current token outlined in pink;
-- cumulative keyed-correlation z-score;
-- the configured decision threshold;
-- matched unwatermarked-control z-score as a dashed reference when available;
-- one-sided detector confidence `1 - p`;
-- the cumulative share of selected tokens with `u ≥ 0.5`.
+The real-Qwen demo defaults to:
 
-The detector uses only:
+> Write a short plain-language article answering: What is AI? Explain what AI is, where it is used, benefits, risks, and conclude briefly.
 
-```text
-generated token IDs
-+ first-word seed
-+ secret key
-────────────────────
-keyed score sequence
-→ cumulative z-score
-→ threshold decision
-```
-
-It does **not** receive Qwen logits, hidden states, top-k probabilities, or model weights.
-
-### Important statistical wording
-
-`1 - p` in the visualization is confidence against SeedMark's null hypothesis. It is **not** a posterior probability that the passage is AI-generated.
-
-With the default `z = 3` decision threshold, the equivalent one-sided normal-test confidence is about 99.865%, not 95%.
-
-## GIF reliability
-
-SeedMark writes every frame using a common adaptive palette and saves GIFs with:
-
-- `save_all=True`;
-- all remaining frames passed through `append_images`;
-- `loop=0`;
-- `optimize=False`;
-- `disposal=2`;
-- an extended final-frame duration.
-
-CI opens the generated files with Pillow and verifies that both GIFs contain multiple frames. Static PNG previews are generated as an additional inspection/fallback artifact.
+This makes the marked/control comparison easier to read than the earlier `Research is` continuation. The default generation budget is 128 new tokens per run.
 
 ## CLI
-
-Default:
 
 ```bash
 seedmark qwen-demo --output-dir results/qwen
 ```
 
-Adjust animation speed and dimensions:
+Adjust animation dimensions or speed:
 
 ```bash
 seedmark qwen-demo \
@@ -120,12 +80,4 @@ Disable visual assets for benchmark-only runs:
 seedmark qwen-demo --no-gif
 ```
 
-With Docker Compose, all assets are served beside the HTML report:
-
-```text
-http://localhost:8081/report.html
-http://localhost:8081/generation.gif
-http://localhost:8081/detection.gif
-```
-
-`Pillow` belongs only to the optional `real-llm` dependency group; the toy/core SeedMark package remains dependency-free.
+GIF encoding uses all recorded frames, a shared adaptive palette, looping, `optimize=False`, and `disposal=2`. CI opens the generated GIFs and verifies that they remain multi-frame files.
