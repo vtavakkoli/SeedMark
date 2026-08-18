@@ -5,20 +5,25 @@ SeedMark follows [Semantic Versioning](https://semver.org/) for the public Pytho
 ## [0.7.0] - 2026-08-18
 
 ### Added
-- Experimental semantic self-key watermarking for real chat answers in `src/seedmark/semantic.py` and `src/seedmark/semantic_chat.py`.
+- Experimental semantic-key watermarking for real chat answers in `src/seedmark/semantic.py` and `src/seedmark/semantic_chat.py`.
+- **Complete-answer semantic scope** as the default semantic mode: SeedMark generates an ordinary draft, derives a coarse secret bucket from the complete answer semantics, then generates a marked final answer that must remain in the same bucket for answer-only detection.
+- **Paragraph semantic scope** as a streaming alternative: the user question bootstraps the first paragraph and completed paragraph semantics key subsequent paragraphs; sentence punctuation never re-keys the watermark.
+- Token-specific occurrence counters instead of absolute positions in semantic mode, so inserting an unrelated token does not shift every later PRF input.
 - A configurable lightweight Hugging Face semantic encoder (`sentence-transformers/all-MiniLM-L6-v2` by default) using masked mean pooling and no extra `sentence-transformers` Python dependency.
-- Secret nearest-anchor semantic buckets that turn recent answer meaning into the watermark context for the following sentence.
-- Sentence-local token offsets that reset at semantic boundaries so insertions/deletions do not permanently shift all later token positions.
-- Semantic generation traces containing sentence index, local offset, semantic bucket, bucket stability margin, semantic context, candidate probabilities, PRF score, and cumulative z-score.
+- Secret nearest-anchor semantic buckets with a recorded top-1/top-2 stability margin.
+- Answer-key stabilization metadata, including the semantic draft, selected bucket, margin, number of marked attempts, and stabilization status.
+- `--semantic-scope`, `--context-paragraphs`, and `--max-answer-passes` CLI options.
 - Tokenizer + semantic-encoder detection that does not require generator model weights or generation logits.
-- Deterministic semantic-core unit tests and `docs/semantic-watermark.md` with design rationale, threat model, limitations, benchmark suggestions, and related work.
+- Deterministic semantic-core and CLI tests plus `docs/semantic-watermark.md` with design rationale, threat model, limitations, benchmark suggestions, and related work.
 
 ### Changed
-- The package now exports semantic watermark primitives alongside the original first-word-seeded teaching algorithm.
+- Semantic mode no longer uses sentence boundaries or sentence-local absolute token offsets.
+- `answer` is the default semantic scope because many normal assistant replies contain a single paragraph and should still be keyed by their own complete semantics.
+- The package exports semantic scope constants and paragraph-boundary helpers alongside the original first-word-seeded teaching algorithm.
 - Package version advanced to `0.7.0`.
 
 ### Notes
-- The original SeedMark mode remains unchanged for reproducibility.
+- The original SeedMark baseline remains unchanged for reproducibility.
 - Semantic mode is an experimental robustness-oriented research path, not a claim of paraphrase-proof or adversarially unbreakable provenance.
 
 ## [0.6.0] - 2026-08-18
