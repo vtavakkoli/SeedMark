@@ -8,19 +8,22 @@ from pathlib import Path
 
 from ._version import __version__
 from .animation import write_visual_assets
+from .chat_llm import (
+    DEFAULT_CHAT_QUESTION,
+    DEFAULT_CHAT_SYSTEM_PROMPT,
+    ChatQwenSeedMark,
+    detect_chat_text_with_tokenizer,
+)
 from .core import WatermarkConfig, detect_tokens, tokenize
 from .experiment import run_experiment
 from .generation import generate_text
-from .hf_llm import DEFAULT_MODEL, QwenSeedMark, detect_text_with_tokenizer
+from .hf_llm import DEFAULT_MODEL
 from .lm import ToyBigramLM
 from .model_cache import cache_home, prefetch_model
 from .reporting import write_qwen_report
 
-
-DEFAULT_QWEN_DEMO_PROMPT = (
-    "Write a short plain-language article answering: What is AI? Explain what AI is, "
-    "where it is used, benefits, risks, and conclude briefly."
-)
+# Kept as a compatibility alias for callers that imported the old CLI constant.
+DEFAULT_QWEN_DEMO_PROMPT = DEFAULT_CHAT_QUESTION
 
 
 def _add_common_config(parser: argparse.ArgumentParser) -> None:
@@ -28,6 +31,24 @@ def _add_common_config(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--strength", type=float, default=1.5)
     parser.add_argument("--top-k", type=int, default=8)
     parser.add_argument("--threshold-z", type=float, default=3.0)
+
+
+def _add_chat_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--question",
+        "--prompt",
+        dest="question",
+        default=DEFAULT_CHAT_QUESTION,
+        help=(
+            "user question for the Qwen chat conversation; --prompt is retained as a "
+            "backward-compatible alias"
+        ),
+    )
+    parser.add_argument(
+        "--system-prompt",
+        default=DEFAULT_CHAT_SYSTEM_PROMPT,
+        help="system instruction used before the user question",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -64,14 +85,17 @@ def build_parser() -> argparse.ArgumentParser:
     qcache.add_argument("--model", default=DEFAULT_MODEL)
     qcache.add_argument("--revision", default=None)
 
-    qwen = sub.add_parser("qwen-demo", help="run a matched real-Qwen marked/control experiment")
+    qwen = sub.add_parser(
+        "qwen-demo",
+        help="run a matched real-Qwen chat experiment with marked/control assistant answers",
+    )
     qwen.add_argument("--model", default=DEFAULT_MODEL)
-    qwen.add_argument("--prompt", default=DEFAULT_QWEN_DEMO_PROMPT)
+    _add_chat_options(qwen)
     qwen.add_argument(
         "--max-new-tokens",
         type=int,
         default=128,
-        help="maximum generated tokens per marked/control article (default: 128)",
+        help="maximum generated assistant tokens per marked/control answer (default: 128)",
     )
     qwen.add_argument("--device", default="auto", choices=("auto", "cpu", "cuda", "mps"))
     qwen.add_argument("--temperature", type=float, default=1.0)
@@ -90,9 +114,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="skip generation/detection GIFs and static preview PNGs",
     )
 
-    qdetect = sub.add_parser("qwen-detect", help="retokenize Qwen text and detect without loading model weights")
+    qdetect = sub.add_parser(
+        "qwen-detect",
+        help="retokenize a saved Qwen chat answer and detect without loading model weights",
+    )
     qdetect.add_argument("--model", default=DEFAULT_MODEL)
-    qdetect.add_argument("--prompt", default=DEFAULT_QWEN_DEMO_PROMPT)
+    _add_chat_options(qdetect)
     qsource = qdetect.add_mutually_exclusive_group(required=True)
     qsource.add_argument("--text")
     qsource.add_argument("--text-file", type=Path)
@@ -151,9 +178,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "qwen-demo":
-        lab = QwenSeedMark(args.model, args.device)
+        lab = ChatQwenSeedMark(args.model, args.device)
         common = dict(
-            prompt=args.prompt,
+            question=args.question,
+            system_prompt=args.system_prompt,
             max_new_tokens=args.max_new_tokens,
             secret_key=args.secret_key,
             strength=args.strength,
@@ -179,8 +207,11 @@ def main(argv: list[str] | None = None) -> int:
 
         print(json.dumps({
             "seedmark_version": __version__,
+            "mode": "chat",
             "model": marked.model_name,
-            "prompt": marked.prompt,
+            "question": args.question,
+            "system_prompt": args.system_prompt,
+            "first_word_seed": marked.first_word,
             "cache_home": str(cache_home()),
             "output_dir": str(args.output_dir),
             "report": str(report_path),
@@ -204,16 +235,19 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "qwen-detect":
         text = args.text if args.text is not None else args.text_file.read_text(encoding="utf-8")
-        result = detect_text_with_tokenizer(
+        result = detect_chat_text_with_tokenizer(
             model_name=args.model,
             text=text,
-            prompt=args.prompt,
+            question=args.question,
+            system_prompt=args.system_prompt,
             secret_key=args.secret_key,
             threshold_z=args.threshold_z,
         )
         print(json.dumps({
             "seedmark_version": __version__,
+            "mode": "chat",
             "model_loaded": False,
+            "question": args.question,
             "n_scored_tokens": result.n_scored_tokens,
             "mean_score": result.mean_score,
             "z_score": result.z_score,
