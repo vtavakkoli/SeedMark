@@ -2,6 +2,18 @@
 
 SeedMark follows [Semantic Versioning](https://semver.org/) for the public Python package and CLI.
 
+## [Unreleased]
+
+### Changed
+- The default Qwen demonstration now asks for a short plain-language article answering “What is AI?” and uses a 128-token generation budget.
+- The real-LLM HTML report now leads with two explicit result cards and a marked-vs-control contrast: watermarked output vs control / without watermark.
+- `generation.gif` and `detection.gif` use a sliding recent-context window for long text and highlight only the current token.
+- `detection.gif` now presents the marked z-curve, dashed control z-curve, decision threshold, one-sided confidence (`1-p`), and prioritized-token share in non-overlapping chart regions.
+
+### Fixed
+- Long generated text no longer overlaps or hides the current highlighted token in GIF sentence panels.
+- Report status badges reflect the actual detector result and explicitly flag runs where the expected marked/control contrast is not achieved.
+
 ## [0.5.0] - 2026-08-17
 
 ### Added
