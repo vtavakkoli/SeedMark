@@ -1,6 +1,6 @@
 """Chat-specific presentation layer for the real-Qwen SeedMark report.
 
-The core report renderer stays reusable for arbitrary HF traces.  This wrapper
+The core report renderer stays reusable for arbitrary HF traces. This wrapper
 adds the semantics of the public chat demo: a user question, two assistant
 answers, and explicit metadata showing that Qwen's native chat template was used.
 """
@@ -57,7 +57,7 @@ def write_chat_report(
         "The same Qwen prompt is generated with and without SeedMark.":
             "The same Qwen chat request is answered with and without SeedMark.",
         ">Watermarked text<": ">Assistant · watermarked<",
-        ">Control text<": ">Assistant · control<",
+        ">Control text · without watermark<": ">Assistant · control<",
         "Default demonstration prompt": "Real chat input",
     }
     for old, new in replacements.items():
