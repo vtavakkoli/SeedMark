@@ -1,6 +1,6 @@
 # Animated generation and detection report
 
-Real-Qwen runs create two complementary GIFs plus static PNG previews:
+Real-Qwen chat runs create two complementary GIFs plus static PNG previews:
 
 ```text
 results/qwen/
@@ -18,23 +18,34 @@ results/qwen/
 
 The visualizations are rendered from the recorded traces after inference; Qwen is not run again to build the GIFs.
 
+## Chat context
+
+The default run uses Qwen's native chat template:
+
+```text
+User: What is AI?
+Assistant: <article generated token by token>
+```
+
+The system instruction asks for a short plain-language article and disables visible thinking output. Only assistant-response tokens are watermarked. The human-readable transcript prefix is kept in the sentence view so the animation looks like a normal chat interaction rather than an arbitrary completion.
+
 ## `generation.gif`
 
-Each frame links the model distribution to the chosen token and the accumulating detector signal:
+Each frame links the model distribution to the chosen assistant token and the accumulating detector signal:
 
 - dashed curve: base Qwen top-k probabilities;
 - solid curve: SeedMark-adjusted probabilities;
 - teal/coral candidate markers: keyed preference direction;
 - pink ring: candidate selected on this step;
 - sentence panel: a **sliding recent-context window**;
-- pink sentence highlight: **only the current appended token**;
+- pink sentence highlight: **only the current appended assistant token**;
 - lower charts: cumulative z-score and prioritized-token share.
 
-The recent-context window is intentionally left-clipped as a generation grows. Historical whitespace is compacted, long fragments are split to the available width, and the current token is kept separate from history. This prevents long article output from overlapping the panel or hiding the current token.
+The recent-context window is intentionally left-clipped as an answer grows. Historical whitespace is compacted, long fragments are split to the available width, and the current token is kept separate from history. This prevents article output from overlapping the panel or hiding the current token.
 
 ## `detection.gif`
 
-The detection animation shows the detector's view of the same experiment. It uses observed token IDs, the normalized first-word seed and the secret key; it does not use Qwen logits or next-token probabilities.
+The detection animation shows the detector's view of the same assistant answer. It uses observed assistant token IDs, the normalized first word of the user question, and the secret key; it does not use Qwen logits or next-token probabilities.
 
 The main evidence panel contains:
 
@@ -51,18 +62,24 @@ The sentence view also uses a sliding recent-context window. Historical tokens a
 
 > `1-p` is confidence against SeedMark's detector null model. It is not a posterior probability that a passage was written by AI.
 
-## Default article demonstration
+## Default demonstration
 
-The real-Qwen demo defaults to:
+The user asks:
 
-> Write a short plain-language article answering: What is AI? Explain what AI is, where it is used, benefits, risks, and conclude briefly.
+> **What is AI?**
 
-This makes the marked/control comparison easier to read than the earlier `Research is` continuation. The default generation budget is 128 new tokens per run.
+The system message asks Qwen to answer as a short plain-language article covering what AI is, where it is used, benefits, risks, and a brief conclusion. The default generation budget is 128 assistant tokens per marked/control run.
 
 ## CLI
 
 ```bash
 seedmark qwen-demo --output-dir results/qwen
+```
+
+Ask another question:
+
+```bash
+seedmark qwen-demo --question "What is edge AI?"
 ```
 
 Adjust animation dimensions or speed:

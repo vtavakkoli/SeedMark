@@ -1,20 +1,43 @@
-# Real-LLM experiment
+# Real-LLM chat experiment
 
-SeedMark's real-model experiment replaces the transparent bigram model with Qwen while preserving the scientific question: **can the detector recover a keyed token-selection correlation without receiving the model's probability distribution?**
+SeedMark's main experiment uses a real Qwen model while preserving the same scientific question: **can the detector recover keyed token-selection correlation without receiving the model's probability distribution?**
 
-## Models
+## Default model
 
 Default: `Qwen/Qwen3.5-0.8B`.
 
-Higher-quality optional comparison: `Qwen/Qwen3.5-2B`.
+Optional higher-quality comparison: `Qwen/Qwen3.5-2B`.
 
-## Default demonstration
+## Real chat state
 
-`seedmark qwen-demo` uses this matched marked/control prompt by default:
+The public demo is intentionally **chat-based**, not a raw completion from text such as `Research is`.
 
-> Write a short plain-language article answering: What is AI? Explain what AI is, where it is used, benefits, risks, and conclude briefly.
+The default conversation is:
 
-The default budget is 128 new tokens for each generation. The report is designed to make the expected contrast explicit:
+```text
+system: You are a helpful assistant. Answer the user's question directly as a
+        short plain-language article. Explain what AI is, where it is used,
+        its main benefits, its main risks, and end with a brief conclusion.
+
+user:   What is AI?
+
+assistant: <generated article>
+```
+
+SeedMark calls the tokenizer's native `apply_chat_template(...)` with an assistant-generation prompt. For the demo, `enable_thinking=False` is passed to the template so the visible output is the assistant article rather than reasoning / `<think>` content.
+
+The system message and user message are normal context. **Only generated assistant tokens are watermarked and scored.**
+
+## Matched experiment
+
+The same system message, user question, model settings, and RNG seed are used for two runs:
+
+```text
+watermarked assistant answer  → keyed probability nudge enabled
+control assistant answer      → original Qwen sampling
+```
+
+The report makes the intended detector contrast explicit:
 
 ```text
 watermarked output          → Detected
@@ -25,30 +48,72 @@ These are not hard-coded outcomes. Badges reflect the actual detector results, a
 
 ## Generation
 
-At each position, SeedMark asks Qwen for next-token logits, applies temperature, keeps the top-k candidates, converts them to base probabilities `p(v)`, and computes a secret-keyed pseudorandom value for each token ID:
+At each assistant-token position, SeedMark asks the actual Qwen model for next-token logits, applies temperature, keeps the model's top-k candidates, and converts them to base probabilities `p(v)`.
+
+The first normalized word of the **user question** is the public seed word. With the default question `What is AI?`, the seed word is `what`.
+
+For each candidate token ID:
 
 ```text
-u(t,v) = HMAC-SHA256(key, SHA256(first_word) || t || token_id) -> [0,1)
+u(t,v) = HMAC-SHA256(
+    key,
+    SHA256(first_word_of_user_question) || t || token_id
+) -> [0,1)
 ```
 
-Marked generation samples from:
+Watermarked generation samples from:
 
 ```text
 q(v) ∝ p(v) exp(strength * (2u(t,v)-1)).
 ```
 
-The matched control uses the same model settings and RNG seed but samples from the unmodified base distribution.
+The matched control samples from `p(v)` without the keyed reweighting.
+
+The trace preserves both `p(v)` and the actual generation probability so the watermark nudge remains inspectable token by token.
 
 ## Detection
 
-The detector receives the observed generated token IDs, first word and key. It does **not** receive Qwen logits, probabilities, hidden states or model weights. The convenience text detector downloads only the public tokenizer and retokenizes the text.
+The detector receives the observed generated **assistant token IDs**, first-word seed, and secret key. It does **not** receive Qwen logits, probabilities, hidden states, or model weights.
 
-Exact token IDs saved in `watermarked-trace.json` and `control-trace.json` are the authoritative representation because decode-then-retokenize round trips can change token boundaries after edits or normalization.
+Exact token IDs saved in `watermarked-trace.json` and `control-trace.json` are the authoritative representation. The convenience `qwen-detect` command loads only the public tokenizer, reconstructs the same chat prefix, retokenizes the saved assistant answer, and then applies the detector.
 
-The detector reports cumulative z-score, one-sided p-value / `1-p`, and the share of selected tokens whose keyed score is at least `0.5`. `detection.gif` overlays the marked and control z-curves with the decision threshold.
+The detector reports cumulative z-score, one-sided p-value / `1-p`, and prioritized-token share. `detection.gif` overlays the marked and control z-curves with the decision threshold.
+
+## Output semantics
+
+`generated_watermarked.txt` and `generated_control.txt` contain the assistant answers only. They do not contain the serialized system/user chat template.
+
+The human-readable report displays the conversation separately:
+
+```text
+User: What is AI?
+Assistant: <article>
+```
+
+This makes the demonstration resemble a normal local-AI interaction while keeping the scientific trace precise.
+
+## Docker Compose
+
+The real chat demo is the default Compose workflow:
+
+```bash
+docker compose up --build
+```
+
+It uses a persistent Hugging Face cache outside the repository, runs the marked/control chat experiment, and serves:
+
+```text
+http://localhost:8081/report.html
+```
+
+The toy bigram baseline is now opt-in:
+
+```bash
+docker compose --profile toy up --build experiment report
+```
 
 ## Scientific boundary
 
-This is a deliberately simple teaching and ablation baseline. It is not a reproduction of SynthID-Text or any vendor watermark. Results should be reported with model/revision, generation settings, text length, edit conditions, quality observations and false-positive calibration.
+This is a deliberately simple teaching and ablation baseline. It is not a reproduction of SynthID-Text or any vendor watermark. Results should be reported with model/revision, system prompt, user question, generation settings, text length, edit conditions, quality observations, and false-positive calibration.
 
 `1-p` is confidence against this detector's null model, **not** a posterior probability that a passage was generated by AI.
