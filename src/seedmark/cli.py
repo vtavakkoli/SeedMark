@@ -14,13 +14,13 @@ from .chat_llm import (
     ChatQwenSeedMark,
     detect_chat_text_with_tokenizer,
 )
+from .chat_reporting import write_chat_report
 from .core import WatermarkConfig, detect_tokens, tokenize
 from .experiment import run_experiment
 from .generation import generate_text
 from .hf_llm import DEFAULT_MODEL
 from .lm import ToyBigramLM
 from .model_cache import cache_home, prefetch_model
-from .reporting import write_qwen_report
 
 # Kept as a compatibility alias for callers that imported the old CLI constant.
 DEFAULT_QWEN_DEMO_PROMPT = DEFAULT_CHAT_QUESTION
@@ -203,7 +203,14 @@ def main(argv: list[str] | None = None) -> int:
                 width=args.gif_width,
                 height=args.gif_height,
             )
-        report_path = write_qwen_report(args.output_dir, marked, control, assets=assets)
+        report_path = write_chat_report(
+            args.output_dir,
+            marked,
+            control,
+            question=args.question,
+            system_prompt=args.system_prompt,
+            assets=assets,
+        )
 
         print(json.dumps({
             "seedmark_version": __version__,
