@@ -56,7 +56,7 @@ class SemanticWatermarkTests(unittest.TestCase):
             bootstrap_text="What is AI?",
         )
         bootstrap_bucket = tracker.current_key.bucket
-        self.assertFalse(tracker.observe_token_piece("AI can help"))
+        self.assertFalse(tracker.observe_token_piece("Benefits can help"))
         self.assertTrue(tracker.observe_token_piece(" people."))
         self.assertEqual(tracker.sentence_index, 1)
         self.assertEqual(tracker.next_token_offset, 1)
