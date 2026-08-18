@@ -6,7 +6,7 @@ from seedmark.semantic import (
     SemanticBucketizer,
     SemanticContextTracker,
     detect_semantic_token_ids,
-    is_sentence_boundary,
+    is_paragraph_boundary,
     semantic_token_score,
 )
 
@@ -25,9 +25,16 @@ class TinySemanticEncoder:
         return (0.25, 0.25, 0.25, 0.25)
 
 
-class NoBoundaryTokenizer:
-    def decode(self, token_ids, clean_up_tokenization_spaces=False):
-        return "x"
+class FlatTokenizer:
+    def decode(
+        self,
+        token_ids,
+        skip_special_tokens=False,
+        clean_up_tokenization_spaces=False,
+    ):
+        if len(token_ids) == 1 and int(token_ids[0]) == 999:
+            return "\n\n"
+        return "x" * len(token_ids)
 
 
 class SemanticWatermarkTests(unittest.TestCase):
@@ -47,7 +54,7 @@ class SemanticWatermarkTests(unittest.TestCase):
         )
         self.assertEqual(left.bucket, right.bucket)
 
-    def test_tracker_rekeys_after_sentence_boundary(self):
+    def test_tracker_rekeys_after_paragraph_not_sentence(self):
         encoder = TinySemanticEncoder()
         bucketizer = SemanticBucketizer(secret_key="semantic-test", bucket_count=16)
         tracker = SemanticContextTracker(
@@ -56,47 +63,63 @@ class SemanticWatermarkTests(unittest.TestCase):
             bootstrap_text="What is AI?",
         )
         bootstrap_bucket = tracker.current_key.bucket
-        self.assertFalse(tracker.observe_token_piece("Benefits can help"))
-        self.assertTrue(tracker.observe_token_piece(" people."))
-        self.assertEqual(tracker.sentence_index, 1)
-        self.assertEqual(tracker.next_token_offset, 1)
+        self.assertFalse(tracker.observe_token(100, "Benefits can help people."))
+        self.assertEqual(tracker.paragraph_index, 0)
+        self.assertTrue(tracker.observe_token(999, "\n\n"))
+        self.assertEqual(tracker.paragraph_index, 1)
+        self.assertEqual(tracker.next_token_occurrence(100), 1)
         self.assertNotEqual(tracker.current_key.bucket, bootstrap_bucket)
 
-    def test_sentence_boundary_recognizes_common_endings(self):
-        self.assertTrue(is_sentence_boundary("This is a sentence."))
-        self.assertTrue(is_sentence_boundary('Is this complete?"'))
-        self.assertTrue(is_sentence_boundary("Paragraph end\n\n"))
-        self.assertFalse(is_sentence_boundary("still generating"))
+    def test_paragraph_boundary_requires_blank_line(self):
+        self.assertFalse(is_paragraph_boundary("This is a sentence."))
+        self.assertFalse(is_paragraph_boundary("One line\n"))
+        self.assertTrue(is_paragraph_boundary("Paragraph end\n\n"))
+        self.assertTrue(is_paragraph_boundary("Paragraph end\r\n\r\n"))
 
-    def test_detector_recovers_strong_semantic_keyed_signal(self):
+    def test_answer_detector_recovers_strong_complete_answer_signal(self):
         secret = "semantic-test-key"
         encoder = TinySemanticEncoder()
+        tokenizer = FlatTokenizer()
         bucketizer = SemanticBucketizer(secret_key=secret, bucket_count=16)
-        bucket = bucketizer.key_for_text("What is AI?", encoder).bucket
+        bucket = bucketizer.key_for_text("x" * 64, encoder).bucket
 
         token_ids = []
+        occurrences: dict[int, int] = {}
         candidates = range(100, 132)
-        for offset in range(1, 65):
+        for _ in range(64):
             chosen = max(
                 candidates,
                 key=lambda token_id: semantic_token_score(
-                    secret, bucket, offset, token_id
+                    secret,
+                    bucket,
+                    occurrences.get(token_id, 0) + 1,
+                    token_id,
                 ),
             )
+            occurrences[chosen] = occurrences.get(chosen, 0) + 1
             token_ids.append(chosen)
 
         result = detect_semantic_token_ids(
             token_ids,
-            tokenizer=NoBoundaryTokenizer(),
+            tokenizer=tokenizer,
             encoder=encoder,
             secret_key=secret,
             bootstrap_text="What is AI?",
             threshold_z=3.0,
             bucket_count=16,
+            semantic_scope="answer",
         )
         self.assertEqual(result.n_scored_tokens, 64)
         self.assertTrue(result.detected)
         self.assertGreater(result.z_score, 3.0)
+
+    def test_unrelated_token_does_not_change_occurrence_domain(self):
+        secret = "semantic-test-key"
+        bucket = 3
+        score_before = semantic_token_score(secret, bucket, 2, 101)
+        _ = semantic_token_score(secret, bucket, 1, 202)
+        score_after = semantic_token_score(secret, bucket, 2, 101)
+        self.assertEqual(score_before, score_after)
 
 
 if __name__ == "__main__":
