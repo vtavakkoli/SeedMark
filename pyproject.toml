@@ -5,14 +5,23 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "seedmark"
 dynamic = ["version"]
-description = "Educational keyed pseudorandom text watermarking and statistical detection"
+description = "Inspectable token-level and semantic self-keyed LLM watermarking research lab"
 readme = "README.md"
 requires-python = ">=3.13"
 license = {text = "MIT"}
 authors = [
   {name = "Vahid Tavakkoli"}
 ]
-keywords = ["llm", "watermark", "text-watermark", "pseudorandom", "detection", "education"]
+keywords = [
+  "llm",
+  "watermark",
+  "text-watermark",
+  "semantic-watermark",
+  "pseudorandom",
+  "detection",
+  "paraphrase-robustness",
+  "education",
+]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
