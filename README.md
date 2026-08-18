@@ -34,7 +34,11 @@ During **watermarked generation**, high-scoring candidates receive a small proba
 
 For the real Qwen path, generation uses genuine model logits and tokenizer token IDs. Detection receives the token IDs (or retokenized text), first-word seed, and secret key—but **not Qwen logits, hidden states, or probability distributions**.
 
-## Real Qwen3.5 experiment
+## Real Qwen3.5 article demo
+
+The default Qwen demo now uses an article-style prompt that is easier to read and compare than a short sentence continuation:
+
+> **Write a short plain-language article answering: What is AI? Explain what AI is, where it is used, benefits, risks, and conclude briefly.**
 
 Install locally:
 
@@ -42,27 +46,53 @@ Install locally:
 python -m pip install -e ".[real-llm]"
 ```
 
-Run:
+Run the default matched experiment:
 
 ```bash
 seedmark qwen-demo \
   --model Qwen/Qwen3.5-0.8B \
-  --prompt "Research is" \
-  --max-new-tokens 64 \
-  --top-k 20 \
   --output-dir results/qwen
+```
+
+The default allows up to **128 new tokens** per marked/control generation so the short article has room to cover the requested points. You can override the prompt or length normally:
+
+```bash
+seedmark qwen-demo \
+  --prompt "Explain edge AI in plain language." \
+  --max-new-tokens 96
 ```
 
 The exact detector can operate on saved token IDs. The convenience text detector loads only the public tokenizer, not model weights:
 
 ```bash
 seedmark qwen-detect \
-  --model Qwen/Qwen3.5-0.8B \
-  --prompt "Research is" \
   --text-file results/qwen/generated_watermarked.txt
 ```
 
 See [`docs/real-llm.md`](docs/real-llm.md) for the method and scientific caveats.
+
+## What the Qwen report makes explicit
+
+The top of `report.html` is a matched comparison, not a single detector score:
+
+```text
+watermarked output          → Detected
+control / without watermark → Not detected
+```
+
+Badges always reflect the actual run. If a run does not achieve the expected contrast, the report says **Review this run** rather than silently presenting it as a success.
+
+The report also contains:
+
+- two clear result cards with z-score, `1-p`, prioritized-token share and threshold;
+- `generation.gif` embedded directly in the report;
+- `detection.gif` embedded directly in the report;
+- watermarked and control text side by side;
+- a sliding recent-context sentence view that wraps cleanly and highlights **only the current token**;
+- a marked-vs-control z-score chart with the decision threshold;
+- one-sided confidence (`1-p`) and prioritized-token-share views.
+
+The displayed `1-p` is confidence against the detector's null model. It is **not** a posterior probability that a passage was written by AI.
 
 ## Docker: fast rebuilds + persistent model cache
 
@@ -133,18 +163,9 @@ print(seedmark.__version__)
 
 See [`CHANGELOG.md`](CHANGELOG.md) and [`docs/versioning.md`](docs/versioning.md). Package version and Qwen model revision are tracked separately so experiments can be reproduced precisely.
 
-## Interactive report
+## Report outputs
 
-Every experiment produces a standalone `report.html`. The Qwen report shows:
-
-- ▶️ animated **real token-by-token** playback;
-- decoded candidate token and tokenizer ID;
-- actual base probability from Qwen's logits;
-- watermark-adjusted sampling probability;
-- keyed pseudorandom score for every top-k candidate;
-- chosen token and cumulative detector z-score;
-- matched watermarked and unwatermarked outputs;
-- JSON traces containing every model/watermark decision.
+Every real-Qwen experiment produces a standalone `report.html` plus the two GIFs, static previews, marked/control text files and JSON traces. The generation animation exposes base-vs-marked candidate probabilities and the current selected token; the detection animation focuses on marked/control statistical evidence.
 
 The toy experiment additionally provides Monte Carlo TPR/FPR, 95% Wilson intervals and empirical ROC/AUC.
 
@@ -226,7 +247,7 @@ Toy defaults:
 | Monte Carlo trials | 300 |
 | experiment RNG seed | 20260817 |
 
-Qwen defaults use `Qwen/Qwen3.5-0.8B`, prompt `Research is`, top-k 20, temperature 1.0, strength 1.5 and 64 new tokens. For archival experiments, pin the Hugging Face model revision as well as the SeedMark version.
+Qwen defaults use `Qwen/Qwen3.5-0.8B`, the **“What is AI?” article prompt** above, top-k 20, temperature 1.0, strength 1.5 and up to 128 new tokens. For archival experiments, pin the Hugging Face model revision as well as the SeedMark version.
 
 ## Tests
 
