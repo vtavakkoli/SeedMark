@@ -12,7 +12,7 @@ from .animation import write_visual_assets
 from .chat_llm import (
     DEFAULT_CHAT_QUESTION,
     DEFAULT_CHAT_SYSTEM_PROMPT,
-    ChatQwenSeedMark,
+    ChatLLMSeedMark,
     detect_chat_text_with_tokenizer,
 )
 from .chat_reporting import write_chat_report
@@ -24,11 +24,11 @@ from .lm import ToyBigramLM
 from .model_cache import cache_home, prefetch_model
 from .semantic import DEFAULT_SEMANTIC_MODEL, DEFAULT_SEMANTIC_SCOPE, SEMANTIC_SCOPES
 from .semantic_chat import (
-    SemanticChatQwenSeedMark,
+    SemanticChatLLMSeedMark,
     detect_semantic_chat_text_with_tokenizer,
 )
 
-DEFAULT_QWEN_DEMO_PROMPT = DEFAULT_CHAT_QUESTION
+DEFAULT_LLM_DEMO_PROMPT = DEFAULT_CHAT_QUESTION
 
 
 def _add_common_config(parser: argparse.ArgumentParser) -> None:
@@ -45,8 +45,8 @@ def _add_chat_options(parser: argparse.ArgumentParser) -> None:
         dest="question",
         default=DEFAULT_CHAT_QUESTION,
         help=(
-            "user question for the Qwen chat conversation; --prompt is retained as a "
-            "backward-compatible alias"
+            "user question for the selected Hugging Face chat conversation; --prompt "
+            "is retained as a backward-compatible alias"
         ),
     )
     parser.add_argument(
@@ -130,13 +130,16 @@ def build_parser() -> argparse.ArgumentParser:
     experiment.add_argument("--experiment-seed", type=int, default=20260817)
     _add_common_config(experiment)
 
-    qcache = sub.add_parser("qwen-cache", help="prefetch a Qwen model into the persistent HF cache")
+    qcache = sub.add_parser(
+        "qwen-cache",
+        help="prefetch a Hugging Face model into the persistent HF cache (legacy command name)",
+    )
     qcache.add_argument("--model", default=DEFAULT_MODEL)
     qcache.add_argument("--revision", default=None)
 
     qwen = sub.add_parser(
         "qwen-demo",
-        help="run a matched real-Qwen chat experiment with marked/control assistant answers",
+        help="run a matched real-LLM chat experiment (legacy command name)",
     )
     qwen.add_argument("--model", default=DEFAULT_MODEL)
     _add_chat_options(qwen)
@@ -153,7 +156,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     qdetect = sub.add_parser(
         "qwen-detect",
-        help="retokenize a saved Qwen chat answer and detect without loading model weights",
+        help="retokenize a saved chat answer without loading model weights (legacy command name)",
     )
     qdetect.add_argument("--model", default=DEFAULT_MODEL)
     _add_chat_options(qdetect)
@@ -165,7 +168,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     semantic = sub.add_parser(
         "semantic-qwen-demo",
-        help="run marked/control Qwen chat generation keyed by answer or paragraph semantics",
+        help="run semantic marked/control LLM chat generation (legacy command name)",
     )
     semantic.add_argument("--model", default=DEFAULT_MODEL)
     semantic.add_argument("--semantic-model", default=DEFAULT_SEMANTIC_MODEL)
@@ -183,8 +186,8 @@ def build_parser() -> argparse.ArgumentParser:
     semantic_detect = sub.add_parser(
         "semantic-qwen-detect",
         help=(
-            "retokenize a saved semantic-watermarked Qwen answer and detect without "
-            "loading generator model weights"
+            "retokenize a saved semantic-watermarked LLM answer without loading "
+            "generator weights (legacy command name)"
         ),
     )
     semantic_detect.add_argument("--model", default=DEFAULT_MODEL)
@@ -259,7 +262,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "qwen-demo":
-        lab = ChatQwenSeedMark(args.model, args.device)
+        lab = ChatLLMSeedMark(args.model, args.device)
         common = dict(
             question=args.question,
             system_prompt=args.system_prompt,
@@ -341,7 +344,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "semantic-qwen-demo":
-        lab = SemanticChatQwenSeedMark(
+        lab = SemanticChatLLMSeedMark(
             args.model,
             args.device,
             semantic_model=args.semantic_model,
