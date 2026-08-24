@@ -1,4 +1,4 @@
-"""Dependency-light tests for the chat-first Qwen demo helpers."""
+"""Dependency-light tests for the model-agnostic Hugging Face chat helpers."""
 
 from __future__ import annotations
 
@@ -7,13 +7,16 @@ import unittest
 from seedmark.chat_llm import (
     DEFAULT_CHAT_QUESTION,
     DEFAULT_CHAT_SYSTEM_PROMPT,
+    ChatLLMSeedMark,
+    ChatQwenSeedMark,
     chat_messages,
     render_chat_prompt,
 )
 
 
 class FakeTokenizer:
-    def __init__(self) -> None:
+    def __init__(self, chat_template=None) -> None:
+        self.chat_template = chat_template
         self.last_messages = None
         self.last_kwargs = None
 
@@ -30,14 +33,22 @@ class ChatPromptTests(unittest.TestCase):
         self.assertEqual(messages[0]["content"], DEFAULT_CHAT_SYSTEM_PROMPT)
         self.assertEqual(messages[1], {"role": "user", "content": "What is AI?"})
 
-    def test_native_chat_template_adds_assistant_generation_prompt(self) -> None:
+    def test_generic_chat_template_adds_assistant_generation_prompt(self) -> None:
         tokenizer = FakeTokenizer()
         rendered = render_chat_prompt(tokenizer, "What is AI?")
         self.assertTrue(rendered.endswith("<assistant>"))
         self.assertEqual(tokenizer.last_messages[1]["content"], "What is AI?")
         self.assertFalse(tokenizer.last_kwargs["tokenize"])
         self.assertTrue(tokenizer.last_kwargs["add_generation_prompt"])
+        self.assertNotIn("enable_thinking", tokenizer.last_kwargs)
+
+    def test_thinking_is_disabled_only_when_template_advertises_it(self) -> None:
+        tokenizer = FakeTokenizer("{% if enable_thinking %}<think>{% endif %}")
+        render_chat_prompt(tokenizer, "What is AI?")
         self.assertFalse(tokenizer.last_kwargs["enable_thinking"])
+
+    def test_qwen_class_name_remains_backward_compatible(self) -> None:
+        self.assertIs(ChatQwenSeedMark, ChatLLMSeedMark)
 
     def test_empty_question_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
