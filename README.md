@@ -24,15 +24,77 @@ Version **0.7.0** contains two families of experiments:
 | **Semantic watermark — answer** **(default semantic mode)** | complete answer semantics | per-token occurrence count | robust research mode for normal assistant answers |
 | **Semantic watermark — paragraph** | previous paragraph semantics | per-token occurrence count reset per paragraph | streaming mode for long structured answers |
 
-The generator-side algorithm is model-agnostic: a compatible autoregressive LLM
-needs stable token IDs and access to next-token logits or probabilities. The
-repository currently ships **Qwen3.5** as the reference Hugging Face backend.
+The generator-side algorithm and public Python API are **model-agnostic**. SeedMark
+can work with compatible autoregressive Hugging Face LLMs that expose stable token
+IDs and next-token logits. Qwen3.5 remains the default demonstration checkpoint,
+but Qwen is no longer the library contract.
 
 > [!IMPORTANT]
 > SeedMark is a research/education prototype. It is **not** Anthropic's production
 > watermark, **not** Google SynthID-Text, **not** C2PA, and does not claim that its
 > watermark is impossible to remove or sufficient as standalone proof of
 > authorship.
+
+---
+
+## 🤗 Model-agnostic Hugging Face API
+
+The preferred public classes use generic LLM names:
+
+```python
+from seedmark import LLMSeedMark, ChatLLMSeedMark, SemanticChatLLMSeedMark
+```
+
+| Class | Use |
+|---|---|
+| `LLMSeedMark` | raw autoregressive text completion |
+| `ChatLLMSeedMark` | assistant generation using the tokenizer's native chat template |
+| `SemanticChatLLMSeedMark` | semantic answer/paragraph watermarking with a chat LLM |
+
+For normal text-generation checkpoints, SeedMark first loads the generator with
+Hugging Face `AutoModelForCausalLM`. If the checkpoint is not supported by that
+auto class, SeedMark can fall back to `AutoModelForMultimodalLM` when available.
+This keeps the existing Qwen3.5 default working while allowing standard causal
+LLMs to use the same SeedMark implementation.
+
+For chat generation, the tokenizer must provide `apply_chat_template(...)`.
+SeedMark uses the selected model's own chat template rather than a Qwen-specific
+prompt format. If the template explicitly advertises an `enable_thinking` option,
+SeedMark passes `enable_thinking=False`; other chat templates are left unchanged.
+
+Raw completion with `LLMSeedMark` does **not** require a chat template.
+
+Example with another Hugging Face chat model:
+
+```python
+from seedmark import ChatLLMSeedMark
+
+lab = ChatLLMSeedMark(
+    model_name="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    device="auto",
+)
+
+result = lab.generate(
+    question="What is edge AI?",
+    watermarked=True,
+)
+
+print(result.text)
+print(result.detection)
+```
+
+The historical names remain available as backward-compatible aliases for existing
+code:
+
+```text
+QwenSeedMark             -> LLMSeedMark
+ChatQwenSeedMark         -> ChatLLMSeedMark
+SemanticChatQwenSeedMark -> SemanticChatLLMSeedMark
+```
+
+The existing `qwen-*` CLI command names are also retained for backward
+compatibility. Despite those legacy names, their `--model` option now uses the
+generic Hugging Face backend.
 
 ---
 
@@ -180,6 +242,9 @@ python -m pip install -e ".[real-llm]"
 
 ### Complete-answer mode — default
 
+The current CLI command names retain `qwen` for compatibility, but `--model` may
+point to another compatible Hugging Face LLM.
+
 ```bash
 seedmark semantic-qwen-demo \
   --question "What is AI?" \
@@ -199,6 +264,7 @@ Useful options:
 
 ```bash
 seedmark semantic-qwen-demo \
+  --model Qwen/Qwen3.5-0.8B \
   --question "What is edge AI?" \
   --bucket-count 32 \
   --max-answer-passes 4 \
@@ -295,10 +361,12 @@ the intended semantic region.
 
 ## 💬 Python API
 
-```python
-from seedmark.semantic_chat import SemanticChatQwenSeedMark
+The preferred API is exported directly from `seedmark`:
 
-lab = SemanticChatQwenSeedMark(
+```python
+from seedmark import SemanticChatLLMSeedMark
+
+lab = SemanticChatLLMSeedMark(
     model_name="Qwen/Qwen3.5-0.8B",
     semantic_device="cpu",
 )
@@ -325,8 +393,23 @@ print(marked.detection)
 print(control.detection)
 ```
 
+The same semantic class can be pointed at another compatible Hugging Face chat
+model:
+
+```python
+from seedmark import SemanticChatLLMSeedMark
+
+lab = SemanticChatLLMSeedMark(
+    model_name="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    semantic_device="cpu",
+)
+```
+
 Use `semantic_scope="paragraph"` and `context_paragraphs=1` for paragraph-level
 streaming keying.
+
+For non-chat raw completion, use `LLMSeedMark`. For normal assistant chat without
+semantic keying, use `ChatLLMSeedMark`.
 
 ---
 
@@ -351,10 +434,10 @@ threshold.
 ## 🌱 Original SeedMark baseline
 
 The original first-word-seeded experiment remains unchanged for reproducibility.
-It asks the reference LLM **“What is AI?”**, generates the answer once with the
+It asks the selected chat LLM **“What is AI?”**, generates the answer once with the
 watermark and once without it, and runs the same baseline detector on both.
 
-Run the baseline with Docker Compose:
+Run the default Qwen-based demonstration with Docker Compose:
 
 ```bash
 docker compose up --build
@@ -370,6 +453,15 @@ Or locally:
 
 ```bash
 seedmark qwen-demo --output-dir results/qwen
+```
+
+The legacy `qwen-demo` command can also use another compatible chat model:
+
+```bash
+seedmark qwen-demo \
+  --model TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
+  --question "What is AI?" \
+  --output-dir results/tinyllama
 ```
 
 ### Baseline generation animation
@@ -408,10 +500,10 @@ Its central teaching property remains:
 ## 🏗️ Architecture
 
 ```text
-                       compatible autoregressive LLM
+                    compatible Hugging Face autoregressive LLM
                                   │
                                   ▼
-                          next-token scores
+                          next-token logits
                                   │
                ┌──────────────────┴──────────────────┐
                │                                     │
@@ -436,25 +528,38 @@ Its central teaching property remains:
 
 A compatible generator backend needs:
 
-1. stable token IDs;
-2. next-token logits or probabilities;
-3. autoregressive token appending;
-4. a compatible prompt/chat-template formatter.
+1. a Hugging Face tokenizer with stable token IDs;
+2. an autoregressive model that exposes next-token logits;
+3. support through `AutoModelForCausalLM`, or a compatible
+   `AutoModelForMultimodalLM` fallback;
+4. autoregressive token appending.
+
+`ChatLLMSeedMark` and `SemanticChatLLMSeedMark` additionally require a tokenizer
+with a usable `apply_chat_template(...)`. `LLMSeedMark` raw completion does not.
 
 Semantic mode additionally needs a deterministic semantic encoder shared by
 generation and detection.
 
 ---
 
-## 🤗 Reference models and cache
+## 🤗 Models and cache
 
-The bundled reference generator is:
+The default demonstration generator is:
 
 ```text
 Qwen/Qwen3.5-0.8B
 ```
 
-Qwen is an example backend, not a mathematical requirement of SeedMark.
+An optional higher-quality Qwen comparison is:
+
+```text
+Qwen/Qwen3.5-2B
+```
+
+These are defaults/examples, not restrictions. Standard Hugging Face causal LMs
+can be selected through `model_name` in Python or `--model` in the current CLI.
+Chat workflows require the selected tokenizer to provide a compatible chat
+template.
 
 The default host-side Hugging Face cache is:
 
@@ -468,13 +573,13 @@ Override it with, for example:
 SEEDMARK_MODEL_CACHE=D:/model-cache/seedmark
 ```
 
-Prefetch the reference generator model with:
+Prefetch the default generator model with:
 
 ```bash
 docker compose run --rm qwen-cache
 ```
 
-or:
+or prefetch a selected Hugging Face model with the legacy CLI command:
 
 ```bash
 seedmark qwen-cache --model Qwen/Qwen3.5-0.8B
@@ -503,15 +608,17 @@ docker compose --profile toy up --build experiment report
 
 ```text
 src/seedmark/core.py           original keyed token watermark primitives
-src/seedmark/chat_llm.py       chat-oriented reference generator adapter
-src/seedmark/hf_llm.py         Hugging Face token watermark primitives
+src/seedmark/hf_llm.py         model-agnostic Hugging Face LLM adapter + token watermark
+src/seedmark/chat_llm.py       model-agnostic Hugging Face chat adapter
 src/seedmark/semantic.py       semantic encoder, buckets, scopes, PRF, detector
-src/seedmark/semantic_chat.py  answer/paragraph semantic chat generation
+src/seedmark/semantic_chat.py  answer/paragraph semantic chat implementation
+src/seedmark/semantic_llm.py   preferred semantic LLM API re-export
 src/seedmark/animation.py      baseline generation/detection GIFs
 src/seedmark/reporting.py      standalone baseline HTML comparison report
-src/seedmark/cli.py            CLI including semantic-qwen-* commands
-examples/semantic_chat.py      minimal semantic marked/control example
+src/seedmark/cli.py            CLI; qwen-* names retained for compatibility
+examples/semantic_chat.py      minimal generic semantic marked/control example
 tests/                         deterministic unit and smoke tests
+docs/real-llm.md               Hugging Face real-LLM backend and chat experiment
 docs/semantic-watermark.md     semantic design, threat model, benchmark plan
 docs/limitations.md            scientific boundaries and attack limitations
 ```
@@ -524,8 +631,9 @@ docs/limitations.md            scientific boundaries and attack limitations
 python -m unittest discover -s tests -v
 ```
 
-Normal CI does not download generator or semantic model weights. Semantic-core and
-CLI contract tests use deterministic lightweight test doubles.
+Normal CI does not download generator or semantic model weights. The generic
+Hugging Face loader policy, public model-agnostic class names, compatibility
+aliases, semantic core, and CLI contracts are tested with lightweight doubles.
 
 ---
 
@@ -543,7 +651,9 @@ Important remaining failure modes include:
 - failure of a very fine bucket configuration to stabilize within the allowed
   number of marked attempts;
 - adaptive attacks with repeated detector access;
-- insufficient statistical power in very short text.
+- insufficient statistical power in very short text;
+- model/tokenizer combinations that do not expose the autoregressive or chat
+  interfaces required by the selected SeedMark class.
 
 A statistically detected watermark is evidence of correlation with the configured
 keyed generation rule under the tested assumptions—not proof of authorship, truth,
