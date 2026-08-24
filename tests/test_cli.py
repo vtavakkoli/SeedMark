@@ -5,14 +5,14 @@ from __future__ import annotations
 import unittest
 
 from seedmark.chat_llm import DEFAULT_CHAT_QUESTION, DEFAULT_CHAT_SYSTEM_PROMPT
-from seedmark.cli import DEFAULT_QWEN_DEMO_PROMPT, build_parser
+from seedmark.cli import DEFAULT_LLM_DEMO_PROMPT, build_parser
 from seedmark.semantic import DEFAULT_SEMANTIC_MODEL, DEFAULT_SEMANTIC_SCOPE
 
 
 class CLIDefaultTests(unittest.TestCase):
     def test_qwen_demo_uses_real_chat_question(self) -> None:
         args = build_parser().parse_args(["qwen-demo"])
-        self.assertEqual(DEFAULT_QWEN_DEMO_PROMPT, "What is AI?")
+        self.assertEqual(DEFAULT_LLM_DEMO_PROMPT, "What is AI?")
         self.assertEqual(DEFAULT_CHAT_QUESTION, "What is AI?")
         self.assertEqual(args.question, "What is AI?")
         self.assertEqual(args.system_prompt, DEFAULT_CHAT_SYSTEM_PROMPT)
