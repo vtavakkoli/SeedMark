@@ -3,10 +3,10 @@
 Requires: pip install -e '.[real-llm]'
 """
 
-from seedmark.semantic_chat import SemanticChatQwenSeedMark
+from seedmark.semantic_llm import SemanticChatLLMSeedMark
 
 
-model = SemanticChatQwenSeedMark(
+model = SemanticChatLLMSeedMark(
     model_name="Qwen/Qwen3.5-0.8B",
     semantic_device="cpu",
 )
