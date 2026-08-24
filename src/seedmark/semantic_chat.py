@@ -9,7 +9,7 @@ from typing import Any
 from .chat_llm import (
     DEFAULT_CHAT_QUESTION,
     DEFAULT_CHAT_SYSTEM_PROMPT,
-    ChatQwenSeedMark,
+    ChatLLMSeedMark,
     _display_prompt,
     chat_messages,
     render_chat_prompt,
@@ -94,7 +94,7 @@ class SemanticGenerationResult:
     trace: tuple[SemanticStepTrace, ...]
 
 
-class SemanticChatQwenSeedMark(ChatQwenSeedMark):
+class SemanticChatLLMSeedMark(ChatLLMSeedMark):
     """Generate assistant answers keyed by paragraph or complete-answer semantics.
 
     ``answer`` scope is the default. It first generates an ordinary semantic draft,
@@ -650,3 +650,7 @@ def detect_semantic_chat_text_with_tokenizer(
         semantic_scope=semantic_scope,
         context_paragraphs=context_paragraphs,
     )
+
+
+# Backward-compatible alias for the former Qwen-specific public class name.
+SemanticChatQwenSeedMark = SemanticChatLLMSeedMark
