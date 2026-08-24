@@ -1,10 +1,10 @@
-"""Chat-oriented real-Qwen adapter for SeedMark.
+"""Chat-oriented Hugging Face LLM adapter for SeedMark.
 
-The public demo should behave like a normal assistant conversation rather than a
-raw text-completion benchmark. The user asks a question, Qwen's own chat template
-builds the model input, and SeedMark modifies only the assistant's next-token
-sampling distribution. Detection still sees only the generated assistant token
-IDs, the first word of the user question, and the secret key.
+The public demo behaves like a normal assistant conversation rather than a raw
+text-completion benchmark. The selected tokenizer's own chat template builds the
+model input, and SeedMark modifies only the assistant's next-token sampling
+distribution. Detection still sees only the generated assistant token IDs, the
+first word of the user question, and the secret key.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from .hf_llm import (
     HFCandidateTrace,
     HFGenerationResult,
     HFStepTrace,
-    QwenSeedMark,
+    LLMSeedMark,
     _load_tokenizer,
     _optional_stack,
     detect_token_ids,
@@ -35,7 +35,7 @@ DEFAULT_CHAT_SYSTEM_PROMPT = (
 
 
 def chat_messages(question: str, system_prompt: str = DEFAULT_CHAT_SYSTEM_PROMPT) -> list[dict[str, str]]:
-    """Build the two-message conversation used by the real-Qwen demo."""
+    """Build the two-message conversation used by the real-LLM chat demo."""
     question = question.strip()
     system_prompt = system_prompt.strip()
     if not question:
@@ -48,19 +48,32 @@ def chat_messages(question: str, system_prompt: str = DEFAULT_CHAT_SYSTEM_PROMPT
     ]
 
 
+def _chat_template_kwargs(tokenizer: Any) -> dict[str, Any]:
+    """Return conservative model-specific template options when they are advertised."""
+    template = getattr(tokenizer, "chat_template", None)
+    templates: list[str] = []
+    if isinstance(template, str):
+        templates.append(template)
+    elif isinstance(template, dict):
+        templates.extend(value for value in template.values() if isinstance(value, str))
+    if any("enable_thinking" in value for value in templates):
+        return {"enable_thinking": False}
+    return {}
+
+
 def render_chat_prompt(
     tokenizer: Any,
     question: str,
     system_prompt: str = DEFAULT_CHAT_SYSTEM_PROMPT,
 ) -> str:
-    """Render Qwen's native chat template with an assistant-generation marker."""
+    """Render the tokenizer's native chat template with a generation marker."""
     if not hasattr(tokenizer, "apply_chat_template"):
         raise RuntimeError("the selected tokenizer does not provide a chat template")
     rendered = tokenizer.apply_chat_template(
         chat_messages(question, system_prompt),
         tokenize=False,
         add_generation_prompt=True,
-        enable_thinking=False,
+        **_chat_template_kwargs(tokenizer),
     )
     if not isinstance(rendered, str) or not rendered:
         raise RuntimeError("chat template returned an empty prompt")
@@ -72,8 +85,8 @@ def _display_prompt(question: str) -> str:
     return f"User: {question.strip()}\nAssistant:"
 
 
-class ChatQwenSeedMark(QwenSeedMark):
-    """Generate a marked or control assistant answer from a real Qwen chat prompt."""
+class ChatLLMSeedMark(LLMSeedMark):
+    """Generate a marked or control assistant answer from a Hugging Face chat LLM."""
 
     def __init__(self, model_name: str = DEFAULT_MODEL, device: str = "auto") -> None:
         super().__init__(model_name=model_name, device=device)
@@ -107,7 +120,7 @@ class ChatQwenSeedMark(QwenSeedMark):
         rng_seed: int = 20260817,
         watermarked: bool = True,
     ) -> HFGenerationResult:
-        """Generate only the assistant answer, using Qwen's native chat template."""
+        """Generate only the assistant answer using the model's native chat template."""
         question = question.strip()
         system_prompt = system_prompt.strip()
         chat_messages(question, system_prompt)  # validation
@@ -232,7 +245,7 @@ def detect_chat_text_with_tokenizer(
     secret_key: str,
     threshold_z: float = 3.0,
 ):
-    """Retokenize a saved assistant answer using the same Qwen chat prefix.
+    """Retokenize a saved assistant answer using the same model chat prefix.
 
     Saved token IDs in the JSON trace remain authoritative. This convenience path
     intentionally loads only the tokenizer and does not load model weights.
@@ -251,3 +264,7 @@ def detect_chat_text_with_tokenizer(
         first_word=normalize_word(question),
         threshold_z=threshold_z,
     )
+
+
+# Backward-compatible alias for the former Qwen-specific public class name.
+ChatQwenSeedMark = ChatLLMSeedMark
