@@ -1,4 +1,4 @@
-"""Real-LLM SeedMark adapter for Hugging Face Qwen models.
+"""Real-LLM SeedMark adapter for Hugging Face models.
 
 The watermark remains intentionally simple: the normalized first word supplies a
 public seed, while HMAC-SHA256 over (seed, position, token-id) supplies a keyed
@@ -6,10 +6,11 @@ pseudorandom score. Generation tilts a real model's top-k probabilities toward
 high-scoring token IDs. Detection needs the tokenizer and secret key, but never
 the model logits or next-token probability distribution.
 
-SeedMark is text-only. Qwen3.5 is a multimodal checkpoint, but we deliberately
-load only its public tokenizer for text preprocessing. This avoids constructing
-Qwen's image/video processors (and therefore avoids an unnecessary torchvision
-dependency) while the multimodal model itself can still run with input_ids only.
+The adapter prefers Hugging Face ``AutoModelForCausalLM`` so standard text LLMs
+can be used directly. If a checkpoint is not registered for the causal-LM auto
+class, SeedMark falls back to ``AutoModelForMultimodalLM`` when that loader is
+available. This keeps the existing Qwen3.5 default working while making the
+public API model-agnostic.
 """
 
 from __future__ import annotations
@@ -104,15 +105,59 @@ def detect_token_ids(
     return DetectionResult(n, mean_score, z_score, p_value, threshold_z, z_score >= threshold_z)
 
 
+def _load_hf_model(
+    auto_causal_model: Any,
+    auto_multimodal_model: Any | None,
+    model_name: str,
+    **kwargs: Any,
+) -> Any:
+    """Load a standard causal LLM, with multimodal fallback for compatible checkpoints."""
+    try:
+        return auto_causal_model.from_pretrained(model_name, **kwargs)
+    except ValueError as causal_error:
+        if auto_multimodal_model is None:
+            raise
+        try:
+            return auto_multimodal_model.from_pretrained(model_name, **kwargs)
+        except ValueError as multimodal_error:
+            raise RuntimeError(
+                f"The selected Hugging Face model {model_name!r} is not supported by "
+                "AutoModelForCausalLM or AutoModelForMultimodalLM."
+            ) from multimodal_error
+
+
+class _AutoLLMModelLoader:
+    """Small adapter exposing the ``from_pretrained`` API expected by SeedMark."""
+
+    def __init__(self, auto_causal_model: Any, auto_multimodal_model: Any | None) -> None:
+        self.auto_causal_model = auto_causal_model
+        self.auto_multimodal_model = auto_multimodal_model
+
+    def from_pretrained(self, model_name: str, **kwargs: Any) -> Any:
+        return _load_hf_model(
+            self.auto_causal_model,
+            self.auto_multimodal_model,
+            model_name,
+            **kwargs,
+        )
+
+
 def _optional_stack() -> tuple[Any, Any, Any]:
     try:
         import torch
-        from transformers import AutoModelForMultimodalLM, AutoTokenizer
+        from transformers import AutoModelForCausalLM, AutoTokenizer
     except ImportError as exc:  # pragma: no cover - exercised only without optional deps
         raise RuntimeError(
             "Real-LLM support is optional. Install it with: pip install -e '.[real-llm]'"
         ) from exc
-    return torch, AutoTokenizer, AutoModelForMultimodalLM
+
+    try:
+        from transformers import AutoModelForMultimodalLM
+    except ImportError:  # pragma: no cover - depends on transformers version
+        AutoModelForMultimodalLM = None
+
+    model_loader = _AutoLLMModelLoader(AutoModelForCausalLM, AutoModelForMultimodalLM)
+    return torch, AutoTokenizer, model_loader
 
 
 def _load_tokenizer(auto_tokenizer: Any, model_name: str) -> Any:
@@ -133,16 +178,16 @@ def _choose_device(torch: Any, requested: str) -> str:
     return "cpu"
 
 
-class QwenSeedMark:
-    """Load one Qwen3.5 model and generate marked/unmarked matched samples."""
+class LLMSeedMark:
+    """Load one Hugging Face LLM and generate marked/unmarked matched samples."""
 
     def __init__(self, model_name: str = DEFAULT_MODEL, device: str = "auto") -> None:
-        torch, AutoTokenizer, AutoModelForMultimodalLM = _optional_stack()
+        torch, AutoTokenizer, AutoModel = _optional_stack()
         self.torch = torch
         self.model_name = model_name
         self.device = _choose_device(torch, device)
         self.tokenizer = _load_tokenizer(AutoTokenizer, model_name)
-        self.model = AutoModelForMultimodalLM.from_pretrained(
+        self.model = AutoModel.from_pretrained(
             model_name,
             torch_dtype="auto",
         )
@@ -153,7 +198,13 @@ class QwenSeedMark:
 
     def _encode(self, text: str) -> tuple[Any, Any]:
         encoded = self.tokenizer(text, return_tensors="pt", add_special_tokens=True)
-        return encoded["input_ids"].to(self.device), encoded["attention_mask"].to(self.device)
+        attention_mask = encoded.get("attention_mask")
+        input_ids = encoded["input_ids"].to(self.device)
+        if attention_mask is None:
+            attention_mask = self.torch.ones_like(input_ids)
+        else:
+            attention_mask = attention_mask.to(self.device)
+        return input_ids, attention_mask
 
     def generate(
         self,
@@ -298,3 +349,7 @@ def detect_text_with_tokenizer(
         first_word=normalize_word(prompt),
         threshold_z=threshold_z,
     )
+
+
+# Backward-compatible alias for code written before the model-agnostic API rename.
+QwenSeedMark = LLMSeedMark
